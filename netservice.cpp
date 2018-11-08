@@ -253,7 +253,6 @@ void tcpservice::procrecv(void* param)
 		} else if (0 == err) {
 			continue;
 		}
-		
 
 		for(iter = mapsock[index].begin(); iter != mapsock[index].end(); iter++) {
 			if(FD_ISSET(iter->first, &fdsetrecv) > 0) {
