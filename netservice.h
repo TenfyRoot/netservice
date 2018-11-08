@@ -25,9 +25,28 @@ typedef struct _tagConfig : tagParam {
 	char ipto[16];
 	int portto;
 	_tagConfig(){
+		portto = 80;
 		sockfrom = -1;
 		sockto = -1;
 		strcpy(ipto,"127.0.0.1");
+	}
+	_tagConfig(const char* ip, int port){
+		sockfrom = -1;
+		sockto = -1;
+		strcpy(ipto,ip);
+		portto = port;
+	}
+	_tagConfig(const char* ip){
+		sockfrom = -1;
+		sockto = -1;
+		strcpy(ipto,ip);
+		portto = 80;
+	}
+	_tagConfig(int port){
+		sockfrom = -1;
+		sockto = -1;
+		strcpy(ipto,"127.0.0.1");
+		portto = port;
 	}
 } tagConfig;
 
@@ -44,6 +63,19 @@ typedef struct _tagVecConfig : tagParam {
 	std::vector<tagConfig>* pVecConfig;
 } tagVecConfig;
 
+#define MAX_LINE 16384
+
+//#define  FD_SETSIZE 1024
+struct fd_state 
+{
+    char buffer[MAX_LINE];
+    size_t buffer_used;
+
+    int writing;
+    size_t n_written;
+    size_t write_upto;
+};
+
 class tcpservice {
 public:
 	tcpservice();
@@ -53,7 +85,7 @@ public:
 	void procstartserver(void *param);
 	void startrecv(int sockfd);
 	void procrecv(void* param);
-	void startmakehole(const char* svrip, int svrport, std::vector<tagConfig>& vecConfig);
+	void startservertrans(const char* svrip, int svrport, std::vector<tagConfig>& vecConfig);
 	void procfromto(void *param);
 	void proctrans(void *param);
 	int  connecthost(const char* ip, int port,int reuseaddr);
@@ -63,6 +95,9 @@ public:
 private:
 	void reset();
 	void stop();
+	struct fd_state * alloc_fd_state(void);
+	int  doread(int fd, struct fd_state *state);
+	int  dowrite(int fd, struct fd_state *state);
 	
 private:
 	pthread_t mpthreadstartserver;
@@ -74,10 +109,11 @@ private:
 	bool btransworking;
 	int maxsock;
 	
-	
 	pthread_t mpthreadrecv[MAXTHREADNUM];
 	bool brecvworking[MAXTHREADNUM];
 	std::map<int,struct sockaddr_in> mapsock[MAXTHREADNUM];
+	
+	struct fd_state *fdstate[FD_SETSIZE];
 };
 
 extern tcpservice* tcp;

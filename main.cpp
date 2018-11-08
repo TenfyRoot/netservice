@@ -30,7 +30,7 @@ void WidebrightSegvHandler(int signum)
 
 int main()
 {
-    signal(SIGPIPE, SIG_IGN); // ignore SIGPIPE 
+    signal(SIGPIPE, SIG_IGN); // ignore SIGPIPE
 	signal(SIGBUS, WidebrightSegvHandler); // 总线错误 
 	signal(SIGSEGV, WidebrightSegvHandler); // SIGSEGV，非法内存访问 
 	signal(SIGFPE, WidebrightSegvHandler); // SIGFPE，数学相关的异常，如被0除，浮点溢出，等等
@@ -38,16 +38,13 @@ int main()
     
 	log("main start ok");
 	std::vector<netservice::tagConfig> vecConfig;
-	netservice::tagConfig config;
-	config.portto = 80;
-	vecConfig.push_back(config);
-	config.portto = 22;
-	vecConfig.push_back(config);
+	vecConfig.push_back(netservice::tagConfig("192.168.100.103"));
+	vecConfig.push_back(netservice::tagConfig(22));
 	
 	netservice::logfun = log;
 	netservice::inst();
 	//netservice::tcp->startserver(19999);
-	netservice::tcp->startmakehole("127.0.0.1",19999,vecConfig);
+	netservice::tcp->startservertrans("127.0.0.1",19999,vecConfig);
 
 	waitsignal();
 	netservice::inst(0);
