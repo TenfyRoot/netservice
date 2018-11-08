@@ -265,7 +265,6 @@ void tcpservice::procrecv(void* param)
 					if (!brecvworking[index]) break;
 					continue;
 				}
-				if (maxsock == iter->first) maxsock -= 1;
 				close(iter->first);
 				log("%s[%d] client leave %s:%d",__FUNCTION__,__LINE__,\
 					inet_ntoa(iter->second.sin_addr), ntohs(iter->second.sin_port));
@@ -327,7 +326,6 @@ void tcpservice::startservertrans(const char* svrip, int svrport, std::vector<ta
 		log("%s[%d] port %d -> %s:%d",__FUNCTION__,__LINE__, iter->portfrom, iter->ipto, iter->portto);
 		continue;
 error:
-		if (maxsock == iter->sockfrom) maxsock -= 1;
 		close(iter->sockfrom);
 		iter->sockfrom = -1;
 		continue;
@@ -383,7 +381,6 @@ void tcpservice::procfromto(void *param)
 					if (0 > iter->sockto) {
 						if (iter->sockfrom > 0) {
 							FD_CLR(iter->sockfrom, &fdsetfrom);
-							if (maxsock == iter->sockfrom) maxsock -= 1;
 							close(iter->sockfrom);
 						}
 						continue;
@@ -399,11 +396,9 @@ void tcpservice::procfromto(void *param)
 	btransworking = false;
 	for (iter = pVecConfig->begin(); iter != pVecConfig->end(); iter++) {
 		if (iter->sockfrom > 0) {
-			if (maxsock == iter->sockfrom) maxsock -= 1;
 			close(iter->sockfrom);
 		}
 		if (iter->sockto > 0) {
-			if (maxsock == iter->sockto) maxsock -= 1;
 			close(iter->sockto);
 		}
 	}
@@ -480,11 +475,9 @@ void tcpservice::proctrans(void *param)
 
 	btransworking = false;
 	if (pConfig->sockfrom > 0) {
-		if (maxsock == pConfig->sockfrom) maxsock -= 1;
 		close(pConfig->sockfrom);
 	}
 	if (pConfig->sockto > 0) {
-		if (maxsock == pConfig->sockto) maxsock -= 1;
 		close(pConfig->sockto);
 	}
 	log("%s[%d] leave",__FUNCTION__,__LINE__);
@@ -526,7 +519,6 @@ int tcpservice::connecthost(unsigned long dwip, int port,int reuseaddr)
 	return sockfd;
 	
 error:
-	if (maxsock == sockfd) maxsock -= 1;
 	if (sockfd > 0) close(sockfd);
 	return -1;
 }
