@@ -9,7 +9,7 @@ CC      := g++
 LDFLAGS :=
 DEFINES :=
 STD     :=
-CFLAGS  := -g -Wall -O0 -pthread $(STD) $(DEFINES) $(INCLUDE)
+CFLAGS  := -g -rdynamic -Wall -Werror -O0 -pthread $(STD) $(DEFINES) $(INCLUDE)
 CXXFLAGS:= $(CFLAGS)
 #-DHAVE_CONFIG_H
 .PHONY : everything objs clean veryclean rebuild

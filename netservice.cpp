@@ -318,7 +318,7 @@ void tcpservice::procfromto(void *param)
 	while(bfromtoworking) {
 		FD_ZERO(&fdsetfrom);
 		for (iter = pVecConfig->begin(); iter != pVecConfig->end(); iter++) {
-			FD_SET(iter->sockfrom,&fdsetfrom);
+			FD_SET(iter->sockfrom, &fdsetfrom);
 		}
 		
 		mtv.tv_sec = 1;
