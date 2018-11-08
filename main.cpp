@@ -15,7 +15,8 @@ int main()
 	
 	netservice::logfun = log;
 	netservice::inst();
-	netservice::tcp->startserver(19999);
+	//netservice::tcp->startserver(19999);
+	netservice::tcp->startmakehole("127.0.0.1",19999,vecConfig);
 
 	waitsignal();
 	netservice::inst(0);
