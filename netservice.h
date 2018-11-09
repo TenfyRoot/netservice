@@ -8,67 +8,94 @@
 #include <map>
 #include <vector>
 #include <sys/epoll.h>
+#include <pthread.h>
 
 namespace netservice {
 
 #define MAXTHREADNUM 20
 
-typedef std::vector<epoll_event> VectorEpEvent;
+class Mutex;
 
-typedef struct  {
+struct tagParam {
 	void* param;
-} tagParam;
+};
 
-typedef struct _tagConfig : tagParam {
-	int sockrecv;
-	int sockhole;
-	int sockto;
+struct tagConfig : tagParam {
+	int  sockhole;
 	char domain[128];
 	char ipfrom[16];
-	int portfrom;
+	int  portfrom;
 	char ipto[16];
-	int portto;
-	_tagConfig(){
-		sockrecv = -1;
+	int  portto;
+	tagConfig() {
 		sockhole = -1;
-		sockto = -1;
 		strcpy(ipto,"127.0.0.1");
 		portto = 80;
 	}
-	_tagConfig(const char* ip, int port){
-		sockrecv = -1;
+	tagConfig(const char* ip, int port) {
 		sockhole = -1;
-		sockto = -1;
 		strcpy(ipto,ip);
 		portto = port;
 	}
-	_tagConfig(const char* ip){
-		sockrecv = -1;
+	tagConfig(const char* ip) {
 		sockhole = -1;
-		sockto = -1;
 		strcpy(ipto,ip);
 		portto = 80;
 	}
-	_tagConfig(int port){
-		sockrecv = -1;
+	tagConfig(int port) {
 		sockhole = -1;
-		sockto = -1;
 		strcpy(ipto,"127.0.0.1");
 		portto = port;
 	}
-} tagConfig;
+};
 
-typedef struct _tagStartServerParam : tagParam {
+struct tagStartServerParam : tagParam {
 	int cpt;
-} tagStartServerParam;
+};
 
-typedef struct _tagIndex : tagParam {
+struct tagIndex : tagParam {
 	int i;
-} tagIndex;
+};
 
-typedef struct _tagVecConfig : tagParam {
+struct tagVecConfig : tagParam {
 	std::vector<tagConfig>* pVecConfig;
-} tagVecConfig;
+};
+
+struct tagTransParam : tagParam {
+	bool btransworking;
+	pthread_t pthreadtrans;
+	int sockrecv;
+	int sockto;
+	tagTransParam() {
+		btransworking = false;
+		pthreadtrans = 0;
+		sockrecv = -1;
+		sockto = -1;
+	}
+	tagTransParam(int sockfd1, int sockfd2) {
+		btransworking = false;
+		pthreadtrans = 0;
+		sockrecv = sockfd1;
+		sockto = sockfd2;
+	}
+};
+
+class Mutex
+{
+    friend class CondVar;
+    pthread_mutex_t  m_mutex;
+
+  public:
+    Mutex() { pthread_mutex_init(&m_mutex, NULL); }
+    virtual ~Mutex() {
+	pthread_mutex_unlock(&m_mutex);
+	pthread_mutex_destroy(&m_mutex);
+    }
+
+    int lock() { return  pthread_mutex_lock(&m_mutex); }
+    int trylock() { return  pthread_mutex_trylock(&m_mutex); }
+    int unlock() { return  pthread_mutex_unlock(&m_mutex); }   
+};
 
 class tcpservice {
 public:
@@ -89,8 +116,11 @@ public:
 private:
 	void reset();
 	void stop();
+	void setsockbuf(int sockfd);
+	void setnonblock(int sockfd);
 	void addfd(int& epfd, int opfd);
 	void delfd(int& epfd, int opfd);
+	void clrfd(int& epfd);
 	
 private:
 	pthread_t mpthreadstartserver;
@@ -103,10 +133,11 @@ private:
 	pthread_t mpthreadrecv[MAXTHREADNUM];
 	bool mbrecvworking[MAXTHREADNUM];
 	
-	int mListenEpollfd, mRecvEpollfd[MAXTHREADNUM], mHoleEpollfd, mTransEpollfd;
-	VectorEpEvent mvecListenEpEvent, mvecRecvEpEvent[MAXTHREADNUM], mvecHoleEpEvent, mvecTransEpEvent;
+	int mListenEpollfd, mRecvEpollfd[MAXTHREADNUM], mHoleEpollfd;
 	std::map<int, std::vector<int> > mmapEpfd;
-	std::map<int,int> mmapfdflag;
+	std::map<int, tagTransParam> mmapTransParam;
+	Mutex mmutex;
+	Mutex mmutexep;
 };
 
 extern tcpservice* tcp;

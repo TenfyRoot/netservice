@@ -1,7 +1,7 @@
 TARGET  := netservice
 LIBS    :=
-INCLUDE := -I . -I .. -I ~/workspace/common/inc
-SOURCE3 := $(wildcard ../*.cpp)
+INCLUDE := -I . -I .. -I ~/workspace/common/inc -I ~/workspace/thirdparty/tinyxml/
+SOURCE3 := $(wildcard ~/workspace/thirdparty/tinyxml/*.cpp)
 SOURCE2 := $(wildcard ~/workspace/common/src/*.cpp)
 SOURCE  := $(wildcard *.c) $(wildcard *.cpp)
 OBJS    := $(patsubst %.c,%.o,$(patsubst %.cpp,%.o,$(SOURCE))) $(patsubst %.c,%.o,$(patsubst %.cpp,%.o,$(SOURCE2))) $(patsubst %.c,%.o,$(patsubst %.cpp,%.o,$(SOURCE3)))
