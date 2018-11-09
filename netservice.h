@@ -7,43 +7,51 @@
 #include <string.h>
 #include <map>
 #include <vector>
+#include <sys/epoll.h>
 
 namespace netservice {
 
 #define MAXTHREADNUM 20
+
+typedef std::vector<epoll_event> VectorEpEvent;
 
 typedef struct  {
 	void* param;
 } tagParam;
 
 typedef struct _tagConfig : tagParam {
+	int sockrecv;
+	int sockhole;
 	int sockto;
-	int sockfrom;
 	char domain[128];
 	char ipfrom[16];
 	int portfrom;
 	char ipto[16];
 	int portto;
 	_tagConfig(){
-		portto = 80;
-		sockfrom = -1;
+		sockrecv = -1;
+		sockhole = -1;
 		sockto = -1;
 		strcpy(ipto,"127.0.0.1");
+		portto = 80;
 	}
 	_tagConfig(const char* ip, int port){
-		sockfrom = -1;
+		sockrecv = -1;
+		sockhole = -1;
 		sockto = -1;
 		strcpy(ipto,ip);
 		portto = port;
 	}
 	_tagConfig(const char* ip){
-		sockfrom = -1;
+		sockrecv = -1;
+		sockhole = -1;
 		sockto = -1;
 		strcpy(ipto,ip);
 		portto = 80;
 	}
 	_tagConfig(int port){
-		sockfrom = -1;
+		sockrecv = -1;
+		sockhole = -1;
 		sockto = -1;
 		strcpy(ipto,"127.0.0.1");
 		portto = port;
@@ -51,7 +59,6 @@ typedef struct _tagConfig : tagParam {
 } tagConfig;
 
 typedef struct _tagStartServerParam : tagParam {
-	int sockfd;
 	int cpt;
 } tagStartServerParam;
 
@@ -62,19 +69,6 @@ typedef struct _tagIndex : tagParam {
 typedef struct _tagVecConfig : tagParam {
 	std::vector<tagConfig>* pVecConfig;
 } tagVecConfig;
-
-#define MAX_LINE 16384
-
-//#define  FD_SETSIZE 1024
-struct fd_state 
-{
-    char buffer[MAX_LINE];
-    size_t buffer_used;
-
-    int writing;
-    size_t n_written;
-    size_t write_upto;
-};
 
 class tcpservice {
 public:
@@ -95,9 +89,8 @@ public:
 private:
 	void reset();
 	void stop();
-	struct fd_state * alloc_fd_state(void);
-	int  doread(int fd, struct fd_state *state);
-	int  dowrite(int fd, struct fd_state *state);
+	void addfd(int& epfd, int opfd);
+	void delfd(int& epfd, int opfd);
 	
 private:
 	pthread_t mpthreadstartserver;
@@ -105,15 +98,15 @@ private:
 	
 	pthread_t mpthreadfromto;
 	bool bfromtoworking;
-	
 	bool btransworking;
-	int maxsock;
 	
 	pthread_t mpthreadrecv[MAXTHREADNUM];
-	bool brecvworking[MAXTHREADNUM];
-	std::map<int,struct sockaddr_in> mapsock[MAXTHREADNUM];
+	bool mbrecvworking[MAXTHREADNUM];
 	
-	struct fd_state *fdstate[FD_SETSIZE];
+	int mListenEpollfd, mRecvEpollfd[MAXTHREADNUM], mHoleEpollfd, mTransEpollfd;
+	VectorEpEvent mvecListenEpEvent, mvecRecvEpEvent[MAXTHREADNUM], mvecHoleEpEvent, mvecTransEpEvent;
+	std::map<int, std::vector<int> > mmapEpfd;
+	std::map<int,int> mmapfdflag;
 };
 
 extern tcpservice* tcp;

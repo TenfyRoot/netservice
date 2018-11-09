@@ -38,13 +38,16 @@ int main()
     
 	log("main start ok");
 	std::vector<netservice::tagConfig> vecConfig;
-	vecConfig.push_back(netservice::tagConfig("192.168.100.103"));
-	vecConfig.push_back(netservice::tagConfig(22));
+	//vecConfig.push_back(netservice::tagConfig("192.168.100.103"));
+	//vecConfig.push_back(netservice::tagConfig(22));
+	vecConfig.push_back(netservice::tagConfig(80));
 	
 	netservice::logfun = log;
 	netservice::inst();
-	//netservice::tcp->startserver(19999);
-	netservice::tcp->startservertrans("127.0.0.1",19999,vecConfig);
+	if (false)
+		netservice::tcp->startserver(19999);
+	else
+		netservice::tcp->startservertrans("127.0.0.1",19999,vecConfig);
 
 	waitsignal();
 	netservice::inst(0);
