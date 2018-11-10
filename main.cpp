@@ -8,7 +8,7 @@
 #include <tinyxml.h>
 
 void WidebrightSegvHandler(int signum);
-bool LoadConfig(const char* xmlfile, std::vector<netservice::tagConfig>& vecConfig);
+bool LoadConfig(const char* xmlfile, char* serverip, std::vector<netservice::tagConfig>& vecConfig);
 int main()
 {
     signal(SIGPIPE, SIG_IGN); // ignore SIGPIPE
@@ -24,12 +24,14 @@ int main()
 	if (false) {
 		netservice::tcp->startserver(19999);
 	} else {
+		char serverip[16];
 		//vecConfig.push_back(netservice::tagConfig("192.168.100.103"));
 		//vecConfig.push_back(netservice::tagConfig(22));
 		//vecConfig.push_back(netservice::tagConfig("192.168.100.103", 80));
 		//vecConfig.push_back(netservice::tagConfig(80));
-		LoadConfig("netservice.xml", vecConfig);
-		netservice::tcp->startservertrans("127.0.0.1",19999, vecConfig);
+		LoadConfig("netservice.xml", serverip, vecConfig);
+		log("server:%s", serverip);
+		netservice::tcp->startservertrans(serverip,19999, vecConfig);
 	}
 
 	waitsignal();
@@ -60,7 +62,7 @@ void WidebrightSegvHandler(int signum)
     exit(0);
 }
 
-bool LoadConfig(const char* xmlfile, std::vector<netservice::tagConfig>& vecConfig)
+bool LoadConfig(const char* xmlfile, char* serverip, std::vector<netservice::tagConfig>& vecConfig)
 {
 	TiXmlDocument doc;
 	if (!doc.LoadFile(xmlfile)) {
@@ -76,11 +78,18 @@ bool LoadConfig(const char* xmlfile, std::vector<netservice::tagConfig>& vecConf
 	
 	/*
 	<config>
+		<server ip="127.0.0.1"/> 
 		<Item port="1"/> 
 		<Item ip="192.168.100.119"/> 
 	</config>
 	*/
 	for (TiXmlElement* elem = root->FirstChildElement(); NULL != elem; elem = elem->NextSiblingElement()) {
+		if (strcmp(elem->Value(), "server") == 0) {
+			const char* svrip = elem->Attribute("ip");
+			if (svrip) svrip = (strcmp(svrip, "") == 0) ? "127.0.0.1" : svrip;
+			strcpy(serverip, svrip);
+			continue;
+		}
 		const char* ip = elem->Attribute("ip");
 		const char* port = elem->Attribute("port");
 		if (ip) ip = (strcmp(ip, "") == 0) ? NULL : ip;

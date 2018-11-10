@@ -12,7 +12,7 @@
 
 namespace netservice {
 
-#define RELEASE(p) {if (p) {delete p; p = 0;}}
+#define release(p) {if (p) {delete p; p = 0;}}
 
 void log(const char* format, ...);
 void log(int level, const char* format, ...);
@@ -28,8 +28,8 @@ void loglevel(int level, const char* format, va_list valst);
 tcpservice* tcp = 0;
 void inst(int create)
 {
-	if (!create) {RELEASE(tcp)}
-	else if (!tcp) {tcp = new tcpservice();}
+	if (!create) release(tcp);
+	if (create && !tcp) {tcp = new tcpservice();}
 	
 };
 
@@ -141,7 +141,7 @@ void tcpservice::startserver(int port, int listencount, int recvthreadcount)
 	
 error:
 	if (0 < sockfd) close(sockfd); sockfd = -1;
-	delete pStartServerParam;
+	release(pStartServerParam);
 }
 
 void tcpservice::procstartserver(void *param)
@@ -150,7 +150,7 @@ void tcpservice::procstartserver(void *param)
 	tagStartServerParam *pStartServerParam = (tagStartServerParam *)param;
 	tagStartServerParam stStartServerParam;
 	memcpy(&stStartServerParam, pStartServerParam, sizeof(tagStartServerParam));
-	if (pStartServerParam) delete pStartServerParam;
+	release(pStartServerParam);
 	
 	unsigned int cpt = (unsigned int)stStartServerParam.cpt;
 	std::map<int, std::vector<int> >::iterator itermap;
@@ -205,7 +205,7 @@ void tcpservice::procrecv(void* param)
 {
 	tagIndex* pIndex = (tagIndex*)param;
 	int index = pIndex->i;
-	if (pIndex) delete pIndex;
+	release(pIndex);
 	
 	log("%s[%d] enter procrecv[%d] ok", __FUNCTION__,__LINE__,index);
 	
@@ -397,7 +397,7 @@ void tcpservice::procfromto(void *param)
 	for (iter = pVecConfig->begin(); iter != pVecConfig->end(); iter++) {
 		delfd(mHoleEpollfd, iter->sockhole);
 	}
-	if (pVecConfigIn) delete pVecConfigIn;
+	release(pVecConfigIn);
 	
 	std::map<int, tagTransParam>::iterator itermap;
 	for (itermap = mmapTransParam.begin(); itermap != mmapTransParam.end(); ++itermap) {
@@ -415,7 +415,7 @@ void tcpservice::proctrans(void *param)
 {
 	tagIndex* pIndex = (tagIndex*)param;
 	int index = pIndex->i;
-	if (pIndex) delete pIndex;
+	release(pIndex);
 	
 	log("%s[%d] *************************************************** [%03d] enter",__FUNCTION__,__LINE__, index);
 	
