@@ -7,8 +7,28 @@
 #include <stdlib.h>
 #include <tinyxml.h>
 
+struct tagCmd {
+	int uid;
+	int cmd;
+};
+
+struct tagHost : tagCmd{
+	char domain[256];
+	int ports[20];
+};
+
+struct tagAssist : tagCmd{
+	int port;
+};
+
+void recvclient(int sockfd, const char* buf);
+void recvassist(int sockfd, const char* buf);
 void WidebrightSegvHandler(int signum);
 bool LoadConfig(const char* xmlfile, char* serverip, std::vector<netservice::tagConfig>& vecConfig);
+
+
+std::map<int, tagHost> Hosts;
+
 int main()
 {
     signal(SIGPIPE, SIG_IGN); // ignore SIGPIPE
@@ -21,8 +41,9 @@ int main()
 	std::vector<netservice::tagConfig> vecConfig;
 	netservice::logfun = log;
 	netservice::inst();
-	if (false) {
-		netservice::tcp->startserver(19999);
+	if (true) {
+		netservice::tcp->startserver(23531, recvclient);
+		netservice::tcp->startserver(34892, recvassist);
 	} else {
 		char serverip[16];
 		//vecConfig.push_back(netservice::tagConfig("192.168.100.103"));
@@ -38,6 +59,26 @@ int main()
 	netservice::inst(0);
 	waitsignal();
 	return 0;
+}
+
+void recvclient(int sockfd, const char* buf)
+{
+	tagCmd* pCmd = (tagCmd*)buf;
+	if (pCmd->cmd == 1) {
+		tagHost stHost;
+		memcpy(&stHost, buf, sizeof(tagHost));
+		Hosts[sockfd] = stHost;
+	} else if (pCmd->cmd == 2) {//request info
+		
+	}
+}
+
+void recvassist(int sockfd, const char* buf)
+{
+	tagCmd* pCmd = (tagCmd*)buf;
+	if (pCmd->cmd == 1) {
+		//tagAssist *pAssist = (tagAssist *)buf;
+	}
 }
 
 void WidebrightSegvHandler(int signum)  

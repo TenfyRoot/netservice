@@ -55,6 +55,7 @@ struct tagStartServerParam : tagParam {
 
 struct tagIndex : tagParam {
 	int i;
+	void *data;
 };
 
 struct tagVecConfig : tagParam {
@@ -97,25 +98,26 @@ class Mutex
     int unlock() { return  pthread_mutex_unlock(&m_mutex); }   
 };
 
+typedef void (*callbackrecv)(int sockfd, const char* pch);
 class tcpservice {
 public:
 	tcpservice();
 	~tcpservice();
 
-	void startserver(int port, int listencount = 100, int recvthreadcount = 1);
+	void startserver(int port, callbackrecv callback = 0, int listencount = 100, int recvthreadcount = 1);
 	void procstartserver(void *param);
 	void startrecv(int sockfd);
 	void procrecv(void* param);
 	void startservertrans(const char* svrip, int svrport, std::vector<tagConfig>& vecConfig);
 	void procfromto(void *param);
 	void proctrans(void *param);
-	int  connecthost(const char* ip, int port,int reuseaddr);
-	int  connecthost(unsigned long dwip, int port,int reuseaddr);
 	int  datasend(int sockfd, const char* buf, int bufsize);
-	
+
 private:
 	void reset();
 	void stop();
+	int  connecthost(const char* ip, int port,int reuseaddr);
+	int  connecthost(unsigned long dwip, int port,int reuseaddr);
 	void setsockbuf(int sockfd);
 	void setnonblock(int sockfd);
 	void addfd(int& epfd, int opfd);
@@ -138,6 +140,9 @@ private:
 	std::map<int, tagTransParam> mmapTransParam;
 	Mutex mmutex;
 	Mutex mmutexep;
+	
+	std::map<int, std::vector<int> > mmapListenfdClientfds;
+	std::map<int, callbackrecv> mmapRecvFunc;
 };
 
 extern tcpservice* tcp;
