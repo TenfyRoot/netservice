@@ -12,13 +12,17 @@ struct tagCmd {
 	int cmd;
 };
 
-struct tagHost : tagCmd{
+struct tagHostInfo : tagCmd{
 	char domain[256];
 	int ports[20];
 };
 
-struct tagAssist : tagCmd{
+struct tagAssistPort : tagCmd{
 	int port;
+};
+
+struct tagHostRequest : tagCmd{
+	int id;
 };
 
 void recvclient(int sockfd, const char* buf);
@@ -27,7 +31,8 @@ void WidebrightSegvHandler(int signum);
 bool LoadConfig(const char* xmlfile, char* serverip, std::vector<netservice::tagConfig>& vecConfig);
 
 
-std::map<int, tagHost> Hosts;
+std::map<int, tagHostInfo> HostInfos;
+std::map<int, tagAssistPort> AssistPorts;
 
 int main()
 {
@@ -65,9 +70,9 @@ void recvclient(int sockfd, const char* buf)
 {
 	tagCmd* pCmd = (tagCmd*)buf;
 	if (pCmd->cmd == 1) {
-		tagHost stHost;
-		memcpy(&stHost, buf, sizeof(tagHost));
-		Hosts[sockfd] = stHost;
+		tagHostInfo st;
+		memcpy(&st, buf, sizeof(st));
+		HostInfos[sockfd] = st;
 	} else if (pCmd->cmd == 2) {//request info
 		
 	}
@@ -77,7 +82,9 @@ void recvassist(int sockfd, const char* buf)
 {
 	tagCmd* pCmd = (tagCmd*)buf;
 	if (pCmd->cmd == 1) {
-		//tagAssist *pAssist = (tagAssist *)buf;
+		tagAssistPort st;
+		memcpy(&st, buf, sizeof(st));
+		AssistPorts[sockfd] = st;
 	}
 }
 
