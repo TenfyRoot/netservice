@@ -6,35 +6,55 @@
 #include <execinfo.h>
 #include <stdlib.h>
 #include <tinyxml.h>
+#include <map>
 
-struct tagCmd {
+#define LISTENPORT 23531
+#define ASSISTPORT 34892
+
+#define HOSTLEN   16
+#define USERCOUNT 5
+#define HOSTCOUNT 5
+#define PORTCOUNT 5
+
+struct tagInfo {
 	int uid;
+	int type;
+	tagInfo():uid(0),type(0) {}
+};
+
+struct tagBase : tagInfo {
 	int cmd;
+	tagBase():cmd(2) {}
 };
 
-struct tagHostInfo : tagCmd{
-	char domain[256];
-	int ports[20];
+struct tagHostPort {
+	char publichost[HOSTLEN];
+	int  port[PORTCOUNT];
+	tagHostPort() {
+		bzero(publichost,sizeof(publichost));
+		bzero(port,sizeof(int)*sizeof(port));
+	}
 };
 
-struct tagAssistPort : tagCmd{
-	int port;
+struct tagHost : tagBase {
+	tagHostPort st;
 };
 
-struct tagHostRequest : tagCmd{
-	int id;
+struct tagProxyConfig : tagBase {
+	tagHostPort st[HOSTCOUNT-1];
 };
 
-void recvclient(int sockfd, const char* buf);
+std::map<int, tagHost> mapHost;
+std::map<int, tagProxyConfig> mapAssistPort;
+
+void recvlisten(int sockfd, const char* buf);
 void recvassist(int sockfd, const char* buf);
+void recva(int sockfd, const char* buf);
+void recvb(int sockfd, const char* buf);
 void WidebrightSegvHandler(int signum);
-bool LoadConfig(const char* xmlfile, char* serverip, std::vector<netservice::tagConfig>& vecConfig);
+bool LoadConfig(const char* xmlfile, char* serverip, tagHost& host, std::vector<netservice::tagConfig>& vecConfig);
 
-
-std::map<int, tagHostInfo> HostInfos;
-std::map<int, tagAssistPort> AssistPorts;
-
-int main()
+int main(int argc, char *argv[])
 {
     signal(SIGPIPE, SIG_IGN); // ignore SIGPIPE
 	signal(SIGBUS, WidebrightSegvHandler); // 总线错误 
@@ -43,21 +63,35 @@ int main()
 	signal(SIGABRT, WidebrightSegvHandler); // SIGABRT，由调用abort函数产生，进程非正常退出
     
 	log("main start ok");
+	char serverip[HOSTLEN];
 	std::vector<netservice::tagConfig> vecConfig;
+	char xmlname[32] = {0};
+	sprintf(xmlname,"%s.xml",argv[0]);
+	tagHost host;
+	LoadConfig(xmlname, serverip, host, vecConfig);
+	
 	netservice::logfun = log;
 	netservice::inst();
-	if (true) {
-		netservice::tcp->startserver(23531, recvclient);
-		netservice::tcp->startserver(34892, recvassist);
+	if (host.type == 0) {
+		netservice::tcp->startserver(LISTENPORT, recvlisten);
+		netservice::tcp->startserver(ASSISTPORT, recvassist);
 	} else {
-		char serverip[16];
-		//vecConfig.push_back(netservice::tagConfig("192.168.100.103"));
-		//vecConfig.push_back(netservice::tagConfig(22));
-		//vecConfig.push_back(netservice::tagConfig("192.168.100.103", 80));
-		//vecConfig.push_back(netservice::tagConfig(80));
-		LoadConfig("netservice.xml", serverip, vecConfig);
 		log("server:%s", serverip);
-		netservice::tcp->startservertrans(serverip,19999, vecConfig);
+		log("uid:%d, type:%d", host.uid, host.type);
+		if (host.type == 1) {
+			int sockfd = netservice::tcp->startconnect(serverip, LISTENPORT, recva);
+			if (0 < sockfd) {
+				host.cmd = 1;
+				netservice::tcp->datasend(sockfd, (char*)&host, sizeof(host));
+			}
+			netservice::tcp->startservertrans(serverip, ASSISTPORT, vecConfig);
+		} else if (host.type == 2) {
+			int sockfd = netservice::tcp->startconnect(serverip, LISTENPORT, recvb);
+			if (0 < sockfd) {
+				host.cmd = 2;
+				netservice::tcp->datasend(sockfd, (char*)&host, sizeof(host));
+			}
+		}
 	}
 
 	waitsignal();
@@ -66,26 +100,43 @@ int main()
 	return 0;
 }
 
-void recvclient(int sockfd, const char* buf)
+void recvlisten(int sockfd, const char* buf)
 {
-	tagCmd* pCmd = (tagCmd*)buf;
-	if (pCmd->cmd == 1) {
-		tagHostInfo st;
+	tagBase* pbase = (tagBase*)buf;
+	if (pbase->cmd == 1) {
+		tagHost st;
 		memcpy(&st, buf, sizeof(st));
-		HostInfos[sockfd] = st;
-	} else if (pCmd->cmd == 2) {//request info
-		
+		mapHost[sockfd] = st;
+	} else if (pbase->cmd == 2) {
+		int sendsize = mapHost.size() * sizeof(tagHostPort);
+		char* sendbuf = new char(sendsize);
+		std::map<int, tagHost>::iterator itermap;
+		int i = 0;
+		for (itermap = mapHost.begin(); itermap != mapHost.end(); ++itermap,++i) {
+			memcpy(sendbuf + i*sizeof(tagHostPort),(tagHostPort*)&(*itermap),sizeof(tagHostPort));
+		}
+		netservice::tcp->datasend(sockfd, sendbuf, sendsize);
 	}
 }
 
 void recvassist(int sockfd, const char* buf)
 {
-	tagCmd* pCmd = (tagCmd*)buf;
-	if (pCmd->cmd == 1) {
-		tagAssistPort st;
-		memcpy(&st, buf, sizeof(st));
-		AssistPorts[sockfd] = st;
+	tagBase* pbase = (tagBase*)buf;
+	if (pbase->cmd == 1) {
+		/*tagAssistPort st;
+		memcpy(&stRecv, buf, sizeof(stRecv));
+		mapAssistPort[sockfd] = stRecv;*/
 	}
+}
+
+void recva(int sockfd, const char* buf)
+{
+	
+}
+
+void recvb(int sockfd, const char* buf)
+{
+	
 }
 
 void WidebrightSegvHandler(int signum)  
@@ -110,11 +161,11 @@ void WidebrightSegvHandler(int signum)
     exit(0);
 }
 
-bool LoadConfig(const char* xmlfile, char* serverip, std::vector<netservice::tagConfig>& vecConfig)
+bool LoadConfig(const char* xmlfile, char* serverip, tagHost& host, std::vector<netservice::tagConfig>& vecConfig)
 {
 	TiXmlDocument doc;
 	if (!doc.LoadFile(xmlfile)) {
-		log(3, "%s",doc.ErrorDesc());
+		//log(3, "%s",doc.ErrorDesc());
 		return false;
 	}
 	TiXmlElement* root = doc.FirstChildElement();
@@ -132,22 +183,36 @@ bool LoadConfig(const char* xmlfile, char* serverip, std::vector<netservice::tag
 	</config>
 	*/
 	for (TiXmlElement* elem = root->FirstChildElement(); NULL != elem; elem = elem->NextSiblingElement()) {
+		const char* ptr;
 		if (strcmp(elem->Value(), "server") == 0) {
-			const char* svrip = elem->Attribute("ip");
-			if (svrip) svrip = (strcmp(svrip, "") == 0) ? "127.0.0.1" : svrip;
-			strcpy(serverip, svrip);
+			ptr = elem->Attribute("ip");
+			if (ptr) ptr = (strcmp(ptr, "") == 0) ? "127.0.0.1" : ptr;
+			strcpy(serverip, ptr);
 			continue;
 		}
-		const char* ip = elem->Attribute("ip");
-		const char* port = elem->Attribute("port");
-		if (ip) ip = (strcmp(ip, "") == 0) ? NULL : ip;
-		if (port) port = (strcmp(port, "") == 0) ? NULL : port;
-		if (ip && port) {
-			vecConfig.push_back(netservice::tagConfig(ip,atoi(port)));
-		} else if (ip) {
-			vecConfig.push_back(netservice::tagConfig(ip));
+		if (strcmp(elem->Value(), "info") == 0) {
+			ptr = elem->Attribute("id");
+			if (ptr) ptr = (strcmp(ptr, "") == 0) ? "0" : ptr;
+			host.uid = atoi(ptr);
+			ptr = elem->Attribute("type");
+			if (ptr) ptr = (strcmp(ptr, "") == 0) ? "0" : ptr;
+			host.type = atoi(ptr);
+			ptr = elem->Attribute("publichost");
+			if (ptr) strcpy(host.st.publichost, ptr);
+			continue;
+		}
+		
+		ptr = elem->Attribute("port");
+		if (ptr) ptr = (strcmp(ptr, "") == 0) ? NULL : ptr;
+		int port = ptr ? atoi(ptr) : 0;
+		ptr = elem->Attribute("ip");
+		if (ptr) ptr = (strcmp(ptr, "") == 0) ? NULL : ptr;
+		if (ptr && port) {
+			vecConfig.push_back(netservice::tagConfig(ptr,port));
+		} else if (ptr) {
+			vecConfig.push_back(netservice::tagConfig(ptr));
 		} else if (port) {
-			vecConfig.push_back(netservice::tagConfig(atoi(port)));
+			vecConfig.push_back(netservice::tagConfig(port));
 		}
 	}
 	return (vecConfig.size() > 0);

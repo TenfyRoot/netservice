@@ -106,7 +106,7 @@ public:
 
 	void startserver(int port, callbackrecv callback = 0, int listencount = 100, int recvthreadcount = 1);
 	void procstartserver(void *param);
-	void startrecv(int sockfd);
+	int  startconnect(const char* ip, int port, callbackrecv callback = 0);
 	void procrecv(void* param);
 	void startservertrans(const char* svrip, int svrport, std::vector<tagConfig>& vecConfig);
 	void procfromto(void *param);

@@ -268,14 +268,23 @@ void tcpservice::procrecv(void* param)
 	log("%s[%d] leave procrecv[%d] ok",__FUNCTION__,__LINE__,index);
 }
 
-void tcpservice::startrecv(int sockfd)
+int tcpservice::startconnect(const char* ip, int port, callbackrecv callback)
 {
+	int sockfd = connecthost(ip, port, true);
+	if (0 > sockfd) return -1;
+	
+	if (callback) {
+		mmapRecvFunc[sockfd] = callback;
+	}
+	
 	tagIndex stIndex;
 	stIndex.param = this;
 	stIndex.i = 0;
 	if (!mpthreadrecv[stIndex.i]) {
 		pthread_create(&mpthreadrecv[stIndex.i], NULL, threadrecv, (void*)&stIndex);
 	}
+	
+	return sockfd;
 }
 
 void tcpservice::startservertrans(const char* svrip, int svrport, std::vector<tagConfig>& vecConfig)
