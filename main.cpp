@@ -14,6 +14,8 @@
 #define HOSTCOUNT 5
 #define PORTCOUNT 5
 
+char* appname;
+
 struct tagInfo {
 	int uid;
 	int type;
@@ -67,6 +69,7 @@ bool LoadConfig(const char* xmlfile, char* serverip, tagHost& host, std::vector<
 
 int main(int argc, char *argv[])
 {
+	appname = argv[0];
     signal(SIGPIPE, SIG_IGN); // ignore SIGPIPE
 	signal(SIGBUS, WidebrightSegvHandler); // 总线错误 
 	signal(SIGSEGV, WidebrightSegvHandler); // SIGSEGV，非法内存访问 
@@ -74,11 +77,11 @@ int main(int argc, char *argv[])
 	signal(SIGABRT, WidebrightSegvHandler); // SIGABRT，由调用abort函数产生，进程非正常退出
     
 	log("main start ok");
+	log ( "enum size is : %d, %d\n", sizeof(tagWelcomePkt),sizeof(PACKET_TYPE) );	
 	std::vector<netservice::tagConfig> vecConfig;
 	char xmlname[32] = {0};
-	sprintf(xmlname,"%s.xml",argv[0]);
+	sprintf(xmlname,"./%s.xml",appname);
 	LoadConfig(xmlname, serverip, host, vecConfig);
-	
 	netservice::logfun = log;
 	netservice::inst();
 	if (host.type == 0) {
@@ -89,11 +92,6 @@ int main(int argc, char *argv[])
 		log("uid:%d, type:%d", host.uid, host.type);
 		if (host.type == 1) {
 			netservice::tcp->startconnect(serverip, SRVTCPMAINPORT, mainconnectrecv);
-			/*if (0 < sockfd) {
-				host.cmd = 1;
-				netservice::tcp->datasend(sockfd, (char*)&host, sizeof(host));
-			}
-			netservice::tcp->startservertrans(serverip, ASSISTPORT, vecConfig);*/
 		} else if (host.type == 2) {
 			int sockfd = netservice::tcp->startconnect(serverip, SRVTCPMAINPORT, recvbl);
 			if (0 < sockfd) {
@@ -251,7 +249,7 @@ void newuserholerecv(int sockfd, const char* data, int size)
 	assert ( pePacketType && *pePacketType == PACKET_TYPE_TCP_DIRECT_CONNECT );
 	usleep ( 1000000 );
 	HandleSrvReqDirectConnect ( (tagSrvReqDirectConnectPkt*)data );
-	log ( "HandleSrvReqDirectConnect end\n" );
+	log ( "HandleSrvReqDirectConnect end" );
 }
 
 void recvbl(int sockfd, const char* data, int size)
@@ -290,22 +288,37 @@ void* threadconnectassist(void *param) {
 void WidebrightSegvHandler(int signum)  
 {  
 	//addr2line -e ./netservice 0x4039e8
-    void *array[10];  
+    void *array[15];
     size_t size;
     char **strings;  
-    size_t i;  
+    size_t i; 
   
-    signal(signum, SIG_DFL); /* 还原默认的信号处理handler */  
+    signal(signum, SIG_DFL); /* 还原默认的信号处理handler */
   
-    size = backtrace (array, 10);  
+    size = backtrace (array, 15);
     strings = (char **)backtrace_symbols (array, size);  
   
-    fprintf(stderr, "widebright received SIGSEGV! Stack trace:\n");  
-    for (i = 0; i < size; i++) {  
-        fprintf(stderr, "%d %s \n", (int)i, strings[i]);  
-    }  
-      
+  	FILE *fp; 
+    char buffer[256];
+    char cmdbuf[128];
+    fprintf(stderr, "widebright received SIGSEGV! Stack trace:\n"); 
+    //for (i = 0; i < size; i++) fprintf(stderr, "%d %s \n", (int)i, strings[i]);
+    for (i = 0; i < size; i++) {
+    	if (strstr(strings[i], appname) == NULL) continue;
+    	if (strstr(strings[i], "WidebrightSegvHandler") != NULL) continue;
+    	sprintf(cmdbuf, "echo '%s' | cut -d '[' -f2 | cut -d ']' -f1", strings[i]);
+    	fp=popen(cmdbuf, "r");
+    	fgets(buffer, sizeof(buffer), fp);
+    	pclose(fp);
+    	sprintf(cmdbuf, "addr2line -e %s %s", appname, buffer);
+    	fp=popen(cmdbuf, "r");
+    	fgets(buffer, sizeof(buffer), fp);
+        fprintf(stderr, "%d %s", (int)i, buffer);
+        pclose(fp);
+    }
+ 
     free (strings);
+    getchar();
     exit(0);
 }
 

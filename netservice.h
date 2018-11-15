@@ -56,6 +56,7 @@ struct tagStartServerParam : tagParam {
 struct tagIndex : tagParam {
 	int i;
 	void *data;
+	tagIndex():i(0),data(0) {}
 };
 
 struct tagVecConfig : tagParam {

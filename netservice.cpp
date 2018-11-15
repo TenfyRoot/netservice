@@ -102,30 +102,38 @@ void tcpservice::startserver(int port, callbackrecv callback, int listencount, i
 {
 	tagStartServerParam *pStartServerParam = new tagStartServerParam();
 	struct sockaddr_in addr;
+	socklen_t socklen = sizeof(struct sockaddr);
+	int reuseaddr = true;
 
-	int sockfd= socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	int sockfd= socket(AF_INET, SOCK_STREAM, 0);
 	if (0 > sockfd) {
 		log(3,"%s[%d] socket error[%d]:%s", __FUNCTION__, __LINE__, errno, strerror(errno));
 		goto error;
 	}
-	log("%s[%d] socket = %d ok", __FUNCTION__, __LINE__,sockfd);
+	
+	if (0 > setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &reuseaddr, sizeof(reuseaddr))) {
+		log(3,"%s[%d] setsockopt error[%d]:%s", __FUNCTION__, __LINE__, errno, strerror(errno));
+		goto error;
+	}
 
 	bzero(&addr, sizeof(struct sockaddr_in));
 	addr.sin_family = AF_INET;
 	addr.sin_port = htons(port);
 	addr.sin_addr.s_addr = htonl(INADDR_ANY);
 	if (0 > bind(sockfd,(struct sockaddr *)(&addr),sizeof(struct sockaddr))) {
-		log(3,"%s[%d] bind %s:%d error[%d]:%s", __FUNCTION__, __LINE__, \
-			inet_ntoa(addr.sin_addr), ntohs(addr.sin_port), errno, strerror(errno));
+		log(3,"%s[%d] bind %d error[%d]:%s", __FUNCTION__, __LINE__, ntohs(addr.sin_port), errno, strerror(errno));
 		goto error;
 	}
-	log("%s[%d] bind port=%d ok", __FUNCTION__, __LINE__, ntohs(addr.sin_port));
 	
 	if (0 > listen(sockfd,listencount)) {
 		log(3,"%s[%d] listen %d error[%d]:%s", __FUNCTION__, __LINE__, port, errno, strerror(errno));
 		goto error;
 	}
-	log("%s[%d] listen count=%d ok", __FUNCTION__, __LINE__, listencount);
+	
+	bzero(&addr, sizeof(struct sockaddr_in));getsockname(sockfd, (struct sockaddr *)(&addr), &socklen);
+	char localip[16];
+	inet_ntop(AF_INET, &addr.sin_addr, localip, sizeof(localip));
+	log(3,"%s[%d] listen ok %s:%d", __FUNCTION__, __LINE__, inet_ntoa(addr.sin_addr), ntohs(addr.sin_port));
 	
 	if (callback) {
 		mmapRecvFunc[sockfd] = callback;
@@ -276,12 +284,15 @@ int tcpservice::startconnect(const char* ip, int port, callbackrecv callback)
 	if (callback) {
 		mmapRecvFunc[sockfd] = callback;
 	}
-	
-	tagIndex stIndex;
-	stIndex.param = this;
-	stIndex.i = 0;
-	if (!mpthreadrecv[stIndex.i]) {
-		pthread_create(&mpthreadrecv[stIndex.i], NULL, threadrecv, (void*)&stIndex);
+
+	tagIndex *pIndex = new tagIndex();
+	pIndex->param = this;
+	if (mmapRecvFunc.find(sockfd) != mmapRecvFunc.end()) {
+		pIndex->data = (void*)mmapRecvFunc[sockfd];
+	}
+	addfd(mRecvEpollfd[pIndex->i], sockfd);
+	if (!mpthreadrecv[pIndex->i]) {
+		pthread_create(&mpthreadrecv[pIndex->i], NULL, threadrecv, (void*)pIndex);
 	}
 	
 	return sockfd;
@@ -306,7 +317,7 @@ void tcpservice::startservertrans(const char* svrip, int svrport, std::vector<ta
 
 		bzero(&addr, sizeof(struct sockaddr_in));getsockname(sockfd, (struct sockaddr *)(&addr), &socklen);
 		
-		iter->sockhole = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+		iter->sockhole = socket(AF_INET, SOCK_STREAM, 0);
 		if (0 > iter->sockhole) {
 			log(3,"%s[%d] socket error[%d]:%s", __FUNCTION__, __LINE__, errno, strerror(errno));
 			continue;
@@ -549,7 +560,7 @@ int tcpservice::connecthost(unsigned long dwip, int port,int reuseaddr)
 	struct sockaddr_in addrmy;
 	socklen_t socklen = sizeof(struct sockaddr);
 	
-	int sockfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	int sockfd = socket(AF_INET, SOCK_STREAM, 0);
 	if (0 > sockfd) {
 		log(3,"%s[%d] socket error[%d]:%s", __FUNCTION__, __LINE__, errno, strerror(errno));
 		return 0;
@@ -557,6 +568,16 @@ int tcpservice::connecthost(unsigned long dwip, int port,int reuseaddr)
 	
 	if (0 > setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &reuseaddr, sizeof(reuseaddr))) {
 		log(3,"%s[%d] setsockopt error[%d]:%s", __FUNCTION__, __LINE__, errno, strerror(errno));
+		goto error;
+	}
+	
+	bzero(&addrmy, sizeof(struct sockaddr_in));
+	addrmy.sin_family = AF_INET;
+	addrmy.sin_port = htons(0);
+	addrmy.sin_addr.s_addr = htonl(INADDR_ANY);
+	if (0 > bind(sockfd,(struct sockaddr *)(&addrmy),sizeof(struct sockaddr))) {
+		log(3,"%s[%d] bind %s:%d error[%d]:%s", __FUNCTION__, __LINE__, \
+			inet_ntoa(addrmy.sin_addr), ntohs(addrmy.sin_port), errno, strerror(errno));
 		goto error;
 	}
 
@@ -571,7 +592,10 @@ int tcpservice::connecthost(unsigned long dwip, int port,int reuseaddr)
 	}
 	
 	bzero(&addrmy, sizeof(struct sockaddr_in));getsockname(sockfd, (struct sockaddr *)(&addrmy), &socklen);
-	log("%s[%d] connect ok a=%s:%d b=%s:%d",__FUNCTION__,__LINE__, inet_ntoa(addr.sin_addr), ntohs(addr.sin_port),inet_ntoa(addrmy.sin_addr), ntohs(addrmy.sin_port));
+	char localip[16],remoteip[16];
+	inet_ntop(AF_INET, &addrmy.sin_addr, localip, sizeof(localip));
+	inet_ntop(AF_INET, &addr.sin_addr, remoteip, sizeof(remoteip));
+	log("%s[%d] connect ok a=%s:%d b=%s:%d",__FUNCTION__,__LINE__, localip, ntohs(addrmy.sin_port), remoteip, ntohs(addr.sin_port));
 	return sockfd;
 	
 error:
@@ -604,7 +628,7 @@ void tcpservice::setnonblock(int sockfd)
 void tcpservice::addfd(int& epfd, int opfd)
 {	
 	struct sockaddr_in addr;
-	struct sockaddr_in addr2;
+	struct sockaddr_in addrpeer;
 	socklen_t socklen = sizeof(struct sockaddr);
 	epoll_event event;
 	
@@ -620,8 +644,11 @@ void tcpservice::addfd(int& epfd, int opfd)
 	mmapEpfd[epfd].push_back(opfd);
 	
 	bzero(&addr, sizeof(struct sockaddr_in));getsockname(opfd, (struct sockaddr *)(&addr), &socklen);
-	bzero(&addr2, sizeof(struct sockaddr_in));getpeername(opfd, (struct sockaddr *)(&addr2), &socklen);
-	log("%s[%d] addfd e%d-s%d a=%s:%d b=%s:%d",__FUNCTION__,__LINE__, epfd, opfd, inet_ntoa(addr.sin_addr), ntohs(addr.sin_port),inet_ntoa(addr2.sin_addr), ntohs(addr2.sin_port));
+	bzero(&addrpeer, sizeof(struct sockaddr_in));getpeername(opfd, (struct sockaddr *)(&addrpeer), &socklen);
+	char ip[16],ippeer[16];
+	inet_ntop(AF_INET, &addr.sin_addr, ip, sizeof(ip));
+	inet_ntop(AF_INET, &addrpeer.sin_addr, ippeer, sizeof(ippeer));
+	log("%s[%d] addfd e%d-s%d a=%s:%d b=%s:%d",__FUNCTION__,__LINE__, epfd, opfd, ip, ntohs(addr.sin_port), ippeer, ntohs(addrpeer.sin_port));
 	
 error:
 	mmutexep.unlock();
@@ -630,7 +657,7 @@ error:
 void tcpservice::delfd(int& epfd, int opfd)
 {
 	struct sockaddr_in addr;
-	struct sockaddr_in addr2;
+	struct sockaddr_in addrpeer;
 	socklen_t socklen = sizeof(struct sockaddr);
 	epoll_event event;
 	std::vector<int>::iterator result;
@@ -650,8 +677,11 @@ void tcpservice::delfd(int& epfd, int opfd)
 		mmapEpfd[epfd].erase(result);
 		
 		bzero(&addr, sizeof(struct sockaddr_in));getsockname(opfd, (struct sockaddr *)(&addr), &socklen);
-		bzero(&addr2, sizeof(struct sockaddr_in));getpeername(opfd, (struct sockaddr *)(&addr2), &socklen);
-		log("%s[%d] delfd e%d-s%d a=%s:%d b=%s:%d",__FUNCTION__,__LINE__, epfd, opfd, inet_ntoa(addr.sin_addr), ntohs(addr.sin_port),inet_ntoa(addr2.sin_addr), ntohs(addr2.sin_port));
+		bzero(&addrpeer, sizeof(struct sockaddr_in));getpeername(opfd, (struct sockaddr *)(&addrpeer), &socklen);
+		char ip[16],ippeer[16];
+		inet_ntop(AF_INET, &addr.sin_addr, ip, sizeof(ip));
+		inet_ntop(AF_INET, &addrpeer.sin_addr, ippeer, sizeof(ippeer));
+		log("%s[%d] delfd e%d-s%d a=%s:%d b=%s:%d",__FUNCTION__,__LINE__, epfd, opfd, ip, ntohs(addr.sin_port), ippeer, ntohs(addrpeer.sin_port));
 		close(opfd);
 		opfd = -1;
 	}
