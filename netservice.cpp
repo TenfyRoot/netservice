@@ -253,7 +253,7 @@ void tcpservice::procrecv(void* param)
 			nRecv = recv(sockrecv, revbuf, sizeof(revbuf), 0);
 			if (0 < nRecv) {
 				if (callbackrecvfunc) {
-					callbackrecvfunc(sockrecv, revbuf);
+					callbackrecvfunc(sockrecv, revbuf, nRecv);
 				} else {
 					log("%s[%d] [%s:%d]:\"%s\"",__FUNCTION__,__LINE__, inet_ntoa(addr.sin_addr), ntohs(addr.sin_port), revbuf);
 				}
@@ -285,6 +285,11 @@ int tcpservice::startconnect(const char* ip, int port, callbackrecv callback)
 	}
 	
 	return sockfd;
+}
+
+void tcpservice::stopconnect(int sockfd)
+{
+	delfd(mRecvEpollfd[0], sockfd);
 }
 
 void tcpservice::startservertrans(const char* svrip, int svrport, std::vector<tagConfig>& vecConfig)
@@ -322,8 +327,6 @@ void tcpservice::startservertrans(const char* svrip, int svrport, std::vector<ta
 			log(3,"%s[%d] listen %d error[%d]:%s", __FUNCTION__, __LINE__, ntohs(addr.sin_port), errno, strerror(errno));
 			goto error;
 		}
-		
-		
 		
 		setsockbuf(iter->sockhole);
 		setnonblock(iter->sockhole);
@@ -452,7 +455,7 @@ void tcpservice::proctrans(void *param)
 	
 	int sockfd;
 	char recvbuf[1024 * 100] = {0};
-	int ret, nRecv;
+	int nRecv;
 
 	std::map<int, tagTransParam>::iterator itermap = mmapTransParam.find(index);
 	if (itermap == mmapTransParam.end()) {
@@ -495,8 +498,7 @@ void tcpservice::proctrans(void *param)
 					log("%s[%d] [%03d] recv=%d error[%d]:%s", __FUNCTION__,__LINE__, index, nRecv, errno, strerror(errno));
 				goto error;
 			}
-			ret = datasend((sockfd == sockto ? sockrecv : sockto), recvbuf, nRecv);
-			if (ret == 0 || ret != nRecv)
+			if (!datasend((sockfd == sockto ? sockrecv : sockto), recvbuf, nRecv))
 				goto error;
 		}
 	}
@@ -515,7 +517,7 @@ error:
 	log("%s[%d] *************************************************** [%03d] leave",__FUNCTION__,__LINE__, index);
 }
 
-int tcpservice::datasend(int sockfd, const char* buf, int bufsize)
+bool tcpservice::datasend(int sockfd, const char* buf, int bufsize)
 {
 	int bufsizeleft = bufsize;
 	int bufsizesend = 0;
@@ -533,7 +535,7 @@ int tcpservice::datasend(int sockfd, const char* buf, int bufsize)
 		bufsizesend += ret;
 		bufsizeleft -= ret;
 	}
-	return bufsizesend;
+	return (bufsizesend == bufsize);
 }
 
 int tcpservice::connecthost(const char* ip, int port,int reuseaddr)
@@ -544,6 +546,8 @@ int tcpservice::connecthost(const char* ip, int port,int reuseaddr)
 int tcpservice::connecthost(unsigned long dwip, int port,int reuseaddr)
 {
 	struct sockaddr_in addr;
+	struct sockaddr_in addrmy;
+	socklen_t socklen = sizeof(struct sockaddr);
 	
 	int sockfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	if (0 > sockfd) {
@@ -565,6 +569,9 @@ int tcpservice::connecthost(unsigned long dwip, int port,int reuseaddr)
 			inet_ntoa(addr.sin_addr), ntohs(addr.sin_port), errno, strerror(errno));
 		goto error;
 	}
+	
+	bzero(&addrmy, sizeof(struct sockaddr_in));getsockname(sockfd, (struct sockaddr *)(&addrmy), &socklen);
+	log("%s[%d] connect ok a=%s:%d b=%s:%d",__FUNCTION__,__LINE__, inet_ntoa(addr.sin_addr), ntohs(addr.sin_port),inet_ntoa(addrmy.sin_addr), ntohs(addrmy.sin_port));
 	return sockfd;
 	
 error:

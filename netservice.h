@@ -98,7 +98,7 @@ class Mutex
     int unlock() { return  pthread_mutex_unlock(&m_mutex); }   
 };
 
-typedef void (*callbackrecv)(int sockfd, const char* pch);
+typedef void (*callbackrecv)(int sockfd, const char* pch, int size);
 class tcpservice {
 public:
 	tcpservice();
@@ -107,11 +107,12 @@ public:
 	void startserver(int port, callbackrecv callback = 0, int listencount = 100, int recvthreadcount = 1);
 	void procstartserver(void *param);
 	int  startconnect(const char* ip, int port, callbackrecv callback = 0);
+	void stopconnect(int sockfd);
 	void procrecv(void* param);
 	void startservertrans(const char* svrip, int svrport, std::vector<tagConfig>& vecConfig);
 	void procfromto(void *param);
 	void proctrans(void *param);
-	int  datasend(int sockfd, const char* buf, int bufsize);
+	bool datasend(int sockfd, const char* buf, int bufsize);
 
 private:
 	void reset();
