@@ -107,7 +107,7 @@ public:
 
 	void startserver(int port, callbackrecv callback = 0, int listencount = 100, int recvthreadcount = 1);
 	void procstartserver(void *param);
-	int  startconnect(const char* ip, int port, callbackrecv callback = 0);
+	int  startconnect(const char* ip, int port, callbackrecv callback = 0, int bindport = 0);
 	void stopconnect(int sockfd);
 	void procrecv(void* param);
 	void startservertrans(const char* svrip, int svrport, std::vector<tagConfig>& vecConfig);
@@ -118,8 +118,9 @@ public:
 private:
 	void reset();
 	void stop();
-	int  connecthost(const char* ip, int port,int reuseaddr);
-	int  connecthost(unsigned long dwip, int port,int reuseaddr);
+	int  connecthost(const char* ip, int port, int reuseaddr);
+	int  connecthost(const char* ip, int port, int bindport, int reuseaddr);
+	int  connecthost(unsigned long dwip, int port, int bindport, int reuseaddr);
 	void setsockbuf(int sockfd);
 	void setnonblock(int sockfd);
 	void addfd(int& epfd, int opfd);

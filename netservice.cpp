@@ -133,7 +133,7 @@ void tcpservice::startserver(int port, callbackrecv callback, int listencount, i
 	bzero(&addr, sizeof(struct sockaddr_in));getsockname(sockfd, (struct sockaddr *)(&addr), &socklen);
 	char localip[16];
 	inet_ntop(AF_INET, &addr.sin_addr, localip, sizeof(localip));
-	log(3,"%s[%d] listen ok %s:%d", __FUNCTION__, __LINE__, inet_ntoa(addr.sin_addr), ntohs(addr.sin_port));
+	log("%s[%d] listen ok %s:%d", __FUNCTION__, __LINE__, inet_ntoa(addr.sin_addr), ntohs(addr.sin_port));
 	
 	if (callback) {
 		mmapRecvFunc[sockfd] = callback;
@@ -276,9 +276,9 @@ void tcpservice::procrecv(void* param)
 	log("%s[%d] leave procrecv[%d] ok",__FUNCTION__,__LINE__,index);
 }
 
-int tcpservice::startconnect(const char* ip, int port, callbackrecv callback)
+int tcpservice::startconnect(const char* ip, int port, callbackrecv callback, int bindport)
 {
-	int sockfd = connecthost(ip, port, true);
+	int sockfd = connecthost(ip, port, bindport, true);
 	if (0 > sockfd) return -1;
 	
 	if (callback) {
@@ -549,12 +549,17 @@ bool tcpservice::datasend(int sockfd, const char* buf, int bufsize)
 	return (bufsizesend == bufsize);
 }
 
-int tcpservice::connecthost(const char* ip, int port,int reuseaddr)
+int tcpservice::connecthost(const char* ip, int port, int reuseaddr)
 {
-	return connecthost(inet_addr(ip), port, reuseaddr);
+	return connecthost(inet_addr(ip), port, 0, reuseaddr);
 }
 
-int tcpservice::connecthost(unsigned long dwip, int port,int reuseaddr)
+int tcpservice::connecthost(const char* ip, int port, int bindport, int reuseaddr)
+{
+	return connecthost(inet_addr(ip), port, bindport, reuseaddr);
+}
+
+int tcpservice::connecthost(unsigned long dwip, int port, int bindport, int reuseaddr)
 {
 	struct sockaddr_in addr;
 	struct sockaddr_in addrmy;
@@ -573,7 +578,7 @@ int tcpservice::connecthost(unsigned long dwip, int port,int reuseaddr)
 	
 	bzero(&addrmy, sizeof(struct sockaddr_in));
 	addrmy.sin_family = AF_INET;
-	addrmy.sin_port = htons(0);
+	addrmy.sin_port = htons(bindport);
 	addrmy.sin_addr.s_addr = htonl(INADDR_ANY);
 	if (0 > bind(sockfd,(struct sockaddr *)(&addrmy),sizeof(struct sockaddr))) {
 		log(3,"%s[%d] bind %s:%d error[%d]:%s", __FUNCTION__, __LINE__, \

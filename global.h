@@ -3,10 +3,6 @@
 
 typedef unsigned int        DWORD;
 typedef int                 BOOL;
-typedef unsigned char       BYTE;
-typedef unsigned short      WORD;
-typedef float               FLOAT;
-typedef int                 INT;
 typedef unsigned int        UINT;
 
 // 服务器地址和端口号定义
@@ -92,6 +88,7 @@ typedef struct _srv_req_make_hole
 		, dwInviterHoleID ( 0 )
 		, dwInvitedID ( 0 )
 		, nClientHolePort ( 0 )
+		, nBindPort ( 0 )
 	{
 		memset ( szClientHoleIP, 0, sizeof(szClientHoleIP) );
 	}
@@ -101,6 +98,7 @@ typedef struct _srv_req_make_hole
 	DWORD dwInvitedID;					// 被邀请方（被动方即客户端B）ID号
 	char szClientHoleIP[32];			// 可以向该IP（请求方的外部IP）地址打洞，即发生一次connect尝试
 	UINT nClientHolePort;				// 可以向该端口号（请求方的外部端口号）打洞，即发生一次connect尝试
+	UINT nBindPort;
 } tagSrvReqMakeHolePkt;
 
 //
