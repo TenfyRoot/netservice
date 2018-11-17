@@ -74,14 +74,17 @@ int main(int argc, char *argv[])
 	signal(SIGFPE, WidebrightSegvHandler); // SIGFPE，数学相关的异常，如被0除，浮点溢出，等等
 	signal(SIGABRT, WidebrightSegvHandler); // SIGABRT，由调用abort函数产生，进程非正常退出
     
-	log("main start ok");
-	log ( "enum size is : %d, %d\n", sizeof(tagWelcomePkt),sizeof(PACKET_TYPE) );	
+	log("main start ok");	
 	std::vector<netservice::tagConfig> vecConfig;
 	char xmlname[32] = {0};
 	sprintf(xmlname,"./%s.xml",appname);
 	LoadConfig(xmlname, serverip, host, vecConfig);
 	netservice::logfun = log;
 	netservice::inst();
+	log ("tagWelcomePkt:%d, tagNewUserLoginPkt:%d, tagSrvReqMakeHolePkt:%d",
+		sizeof(tagWelcomePkt),
+		sizeof(tagNewUserLoginPkt),
+		sizeof(tagSrvReqMakeHolePkt));
 	if (host.type == 0) {
 		//netservice::tcp->startserver(SRVTCPMAINPORT, recvlisten);
 		//netservice::tcp->startserver(SRVTCPHOLEPORT, recvassist);
@@ -123,7 +126,7 @@ void recvlisten(int sockfd, const char* data, int size)
 
 void HandleNewUserLogin(int sockfd, tagNewUserLoginPkt* pNewUserLoginPkt)
 {
-	log ( "New user ( %s:%d:%d ) login server", pNewUserLoginPkt->szClientIP, pNewUserLoginPkt->nClientPort, pNewUserLoginPkt->dwID );
+	log ( "[A say] new user login server %s:%d:%d", pNewUserLoginPkt->szClientIP, pNewUserLoginPkt->nClientPort, pNewUserLoginPkt->dwID );
 
 	// 创建打洞Socket，连接服务器协助打洞的端口号 SRVTCPHOLEPORT
 	int sockhole = netservice::tcp->startconnect(serverip, SRVTCPHOLEPORT, newuserholerecv);
@@ -131,7 +134,7 @@ void HandleNewUserLogin(int sockfd, tagNewUserLoginPkt* pNewUserLoginPkt)
 	
 	struct sockaddr_in addr;
 	socklen_t socklen = sizeof(struct sockaddr);
-	bzero(&addr, sizeof(struct sockaddr_in));getsockname(sockfd, (struct sockaddr *)(&addr), &socklen);
+	bzero(&addr, sizeof(struct sockaddr_in));getsockname(sockhole, (struct sockaddr *)(&addr), &socklen);
 	int holeport = ntohs(addr.sin_port);
 	
 	// 创建一个线程来侦听 打洞端口 的连接请求
@@ -155,7 +158,7 @@ void HandleSrvReqMakeHole(int sockfd, tagSrvReqMakeHolePkt* pSrvReqMakeHolePkt)
 	
 	struct sockaddr_in addr;
 	socklen_t socklen = sizeof(struct sockaddr);
-	bzero(&addr, sizeof(struct sockaddr_in));getsockname(sockfd, (struct sockaddr *)(&addr), &socklen);
+	bzero(&addr, sizeof(struct sockaddr_in));getsockname(sockhole, (struct sockaddr *)(&addr), &socklen);
 	int holeport = ntohs(addr.sin_port);
 	
 	tagReqSrvDisconnectPkt ReqSrvDisconnectPkt;
@@ -176,16 +179,12 @@ void HandleSrvReqMakeHole(int sockfd, tagSrvReqMakeHolePkt* pSrvReqMakeHolePkt)
 	// 创建一个线程来向客户端A的外部IP地址、端口号打洞
 	pthread_t pthreadId = 0;
 	pthread_create(&pthreadId, NULL, ThreadProcMakeHole, (void*)pSrvReqMakeHolePktNew);
-	
-	// 创建一个线程来侦听的连接请求
-	pthread_t pthreadIdListen = 0;
-	pthread_create(&pthreadIdListen, NULL, ThreadProcListenHole, (void*)&holeport);
 }
 
 void HandleSrvReqDirectConnect(tagSrvReqDirectConnectPkt* pSrvReqDirectConnectPkt)
 {
 	assert ( pSrvReqDirectConnectPkt );
-	log ( "You can connect direct to ( IP:%s  PORT:%d  ID:%u )\n", pSrvReqDirectConnectPkt->szInvitedIP,
+	log ( "[A say] you can connect direct to %s:%d:%u \n", pSrvReqDirectConnectPkt->szInvitedIP,
 		pSrvReqDirectConnectPkt->nInvitedPort, pSrvReqDirectConnectPkt->dwInvitedID );
 }
 
@@ -197,23 +196,27 @@ void* ThreadProcMakeHole(void* lpParameter)
 	memcpy ( &SrvReqMakeHolePkt, pSrvReqMakeHolePkt, sizeof(tagSrvReqMakeHolePkt) );
 	delete pSrvReqMakeHolePkt; pSrvReqMakeHolePkt = NULL;
 	
-	log ( "Server request make hole to ( IP:%s  PORT:%d  ID:%d )", SrvReqMakeHolePkt.szClientHoleIP,\
+	log ( "[B say] server request make hole to %s:%d:%d", SrvReqMakeHolePkt.szClientHoleIP,\
 		SrvReqMakeHolePkt.nClientHolePort, SrvReqMakeHolePkt.dwInviterID );
 	
 	// 创建Socket，本地端口绑定到 nBindPort，连接客户端A的外部IP和端口号（这个连接往往会失败）
 	int sockfd = netservice::tcp->startconnect(SrvReqMakeHolePkt.szClientHoleIP, SrvReqMakeHolePkt.nClientHolePort, connectrecv, SrvReqMakeHolePkt.nBindPort);
 	if (0 > sockfd) return 0;
-	log ( "Connect success when make hole. Receiving data ..." );
-	
-	const char* buf = "hello, i am in!";
+	log ( "[B say] connect success when make hole. receiving data ..." );
+
+	const char* buf = "[B say] hello!";
 	netservice::tcp->datasend( sockfd, buf, (int)strlen(buf) );
+	
+	// 创建一个线程来侦听的连接请求
+	pthread_t pthreadIdListen = 0;
+	pthread_create(&pthreadIdListen, NULL, ThreadProcListenHole, (void*)&SrvReqMakeHolePkt.nBindPort);
 	return 0;
 }
 
 void* ThreadProcListenHole(void* lpParameter)
 {
 	int holeport = *((int*)(lpParameter));
-	log ( "Client.%d will listen at port %d", gWelcomePkt.dwID, holeport );
+	log ( "listen at port %d", holeport );
 	netservice::tcp->startserver(holeport, listenrecv);
 	return 0;
 }
@@ -237,14 +240,14 @@ void mainconnectrecv(int sockfd, const char* data, int size)
 		}
 	case PACKET_TYPE_NEW_USER_LOGIN:
 		{// 其他客户端（客户端B）登录到服务器了
-			log ("tagNewUserLoginPkt:%d size:%d", sizeof(tagNewUserLoginPkt), size);
+			log ("[A say] tagNewUserLoginPkt:%d size:%d", sizeof(tagNewUserLoginPkt), size);
 			assert ( size == sizeof(tagNewUserLoginPkt) );
 			HandleNewUserLogin ( sockfd, (tagNewUserLoginPkt*)data );
 			break;
 		}
 	case PACKET_TYPE_REQUEST_MAKE_HOLE:
 		{// 服务器要我（客户端B）向另外一个客户端（客户端A）打洞
-			log ("tagSrvReqMakeHolePkt:%d size:%d", sizeof(tagSrvReqMakeHolePkt), size);
+			log ("[B say] tagSrvReqMakeHolePkt:%d size:%d", sizeof(tagSrvReqMakeHolePkt), size);
 			assert ( size == sizeof(tagSrvReqMakeHolePkt) );
 			HandleSrvReqMakeHole ( sockfd, (tagSrvReqMakeHolePkt*)data );
 			break;
@@ -261,12 +264,12 @@ void newuserholerecv(int sockfd, const char* data, int size)
 	assert ( pePacketType && *pePacketType == PACKET_TYPE_TCP_DIRECT_CONNECT );
 	usleep ( 1000000 );
 	HandleSrvReqDirectConnect ( (tagSrvReqDirectConnectPkt*)data );
-	log ( "HandleSrvReqDirectConnect end" );
+	log ( "[A say] HandleSrvReqDirectConnect end" );
 }
 
 void listenrecv(int sockfd, const char* data, int size)
 {
-	log ( "-->>> Received Data : %s", data );
+	log ( "[A say] recv from B: %s", data );
 	char buf[256];
 	sprintf(buf, "reply: %s", data);
 	netservice::tcp->datasend( sockfd, buf, (int)strlen(buf) );
@@ -274,7 +277,7 @@ void listenrecv(int sockfd, const char* data, int size)
 
 void connectrecv(int sockfd, const char* data, int size)
 {
-	log ( "-->>> Received Data : %s", data );
+	log ( "[B say] recv from A: %s", data );
 }
 
 void WidebrightSegvHandler(int signum)  
