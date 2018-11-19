@@ -98,11 +98,10 @@ void tcpservice::stop()
 	clrfd(mHoleEpollfd);
 }
 
-void tcpservice::startserver(int port, callbackrecv callback, int listencount, int recvthreadcount)
+void tcpservice::startserver(int port, callbackrecv cbrecv, callbackaccpet cbaccpet, int listencount, int recvthreadcount)
 {
 	tagStartServerParam *pStartServerParam = new tagStartServerParam();
 	struct sockaddr_in addr;
-	socklen_t socklen = sizeof(struct sockaddr);
 	int reuseaddr = true;
 
 	int sockfd= socket(AF_INET, SOCK_STREAM, 0);
@@ -121,22 +120,20 @@ void tcpservice::startserver(int port, callbackrecv callback, int listencount, i
 	addr.sin_port = htons(port);
 	addr.sin_addr.s_addr = htonl(INADDR_ANY);
 	if (0 > bind(sockfd,(struct sockaddr *)(&addr),sizeof(struct sockaddr))) {
-		log(3,"%s[%d] bind %d error[%d]:%s", __FUNCTION__, __LINE__, ntohs(addr.sin_port), errno, strerror(errno));
+		log(3,"%s[%d] bind port[%d] error[%d]:%s", __FUNCTION__, __LINE__, ntohs(addr.sin_port), errno, strerror(errno));
 		goto error;
 	}
 	
 	if (0 > listen(sockfd,listencount)) {
-		log(3,"%s[%d] listen %d error[%d]:%s", __FUNCTION__, __LINE__, port, errno, strerror(errno));
+		log(3,"%s[%d] listen port[%d] error[%d]:%s", __FUNCTION__, __LINE__, port, errno, strerror(errno));
 		goto error;
 	}
 	
-	bzero(&addr, sizeof(struct sockaddr_in));getsockname(sockfd, (struct sockaddr *)(&addr), &socklen);
-	char localip[16];
-	inet_ntop(AF_INET, &addr.sin_addr, localip, sizeof(localip));
-	log("%s[%d] listen ok %s:%d", __FUNCTION__, __LINE__, inet_ntoa(addr.sin_addr), ntohs(addr.sin_port));
-	
-	if (callback) {
-		mmapRecvFunc[sockfd] = callback;
+	if (cbrecv) {
+		mmapRecvFunc[sockfd] = cbrecv;
+	}
+	if (cbaccpet) {
+		mmapAcceptFunc[sockfd] = cbaccpet;
 	}
 	
 	setsockbuf(sockfd);
@@ -147,6 +144,7 @@ void tcpservice::startserver(int port, callbackrecv callback, int listencount, i
 	if (listencount % recvthreadcount) {
 		pStartServerParam->cpt += 1;
 	}
+	pStartServerParam->port = port;
 	pStartServerParam->param = this;
 	pthread_create(&mpthreadstartserver, NULL, threadstartserver, (void*)pStartServerParam);
 	return;
@@ -158,12 +156,13 @@ error:
 
 void tcpservice::procstartserver(void *param)
 {
-	log("%s[%d] enter", __FUNCTION__, __LINE__);
 	tagStartServerParam *pStartServerParam = (tagStartServerParam *)param;
 	tagStartServerParam stStartServerParam;
 	memcpy(&stStartServerParam, pStartServerParam, sizeof(tagStartServerParam));
 	release(pStartServerParam);
+	int port = stStartServerParam.port;
 	
+	log("%s[%d] enter[%d]", __FUNCTION__, __LINE__, port);
 	unsigned int cpt = (unsigned int)stStartServerParam.cpt;
 	std::map<int, std::vector<int> >::iterator itermap;
 
@@ -193,7 +192,11 @@ void tcpservice::procstartserver(void *param)
 			int sockrecv = accept(socklisten, (struct sockaddr*)&addr, &socklen);
 			if(sockrecv > 0) {
 				mmapListenfdClientfds[socklisten].push_back(sockrecv);
-				log("%s[%d] client enter %s:%d", __FUNCTION__,__LINE__, inet_ntoa(addr.sin_addr), ntohs(addr.sin_port));
+				if (mmapAcceptFunc.find(socklisten) != mmapAcceptFunc.end()) {
+					(mmapAcceptFunc[socklisten])(socklisten, sockrecv);
+				} else {
+					log("%s[%d] client enter %s:%d", __FUNCTION__,__LINE__, inet_ntoa(addr.sin_addr), ntohs(addr.sin_port));
+				}
 				for (int i = 0; i < MAXTHREADNUM && bstartserverworking; i++) {
 					itermap = mmapEpfd.find(mRecvEpollfd[i]);
 					if (itermap == mmapEpfd.end() || itermap->second.size() < cpt) {
@@ -217,7 +220,7 @@ void tcpservice::procstartserver(void *param)
 	}
 	bstartserverworking = false;
 	mpthreadstartserver = 0;
-	log("%s[%d] leave",__FUNCTION__, __LINE__);
+	log("%s[%d] leave[%d]",__FUNCTION__, __LINE__, port);
 }
 
 void tcpservice::procrecv(void* param)
@@ -227,7 +230,7 @@ void tcpservice::procrecv(void* param)
 	callbackrecv callbackrecvfunc = (callbackrecv)pIndex->data;
 	release(pIndex);
 	
-	log("%s[%d] enter procrecv[%d] ok", __FUNCTION__,__LINE__,index);
+	log("%s[%d] enter[%d]", __FUNCTION__,__LINE__, index);
 	
 	int sockrecv;
 	int nRecv;
@@ -273,7 +276,7 @@ void tcpservice::procrecv(void* param)
 	}
 	mbrecvworking[index] = false;
 	mpthreadrecv[index] = 0;
-	log("%s[%d] leave procrecv[%d] ok",__FUNCTION__,__LINE__,index);
+	log("%s[%d] leave[%d] ok",__FUNCTION__,__LINE__,index);
 }
 
 int tcpservice::startconnect(const char* ip, int port, callbackrecv callback, int bindport)
@@ -462,7 +465,7 @@ void tcpservice::proctrans(void *param)
 	int index = pIndex->i;
 	release(pIndex);
 	
-	log("%s[%d] *************************************************** [%03d] enter",__FUNCTION__,__LINE__, index);
+	log("%s[%d] enter [%03d]",__FUNCTION__,__LINE__, index);
 	
 	int sockfd;
 	char recvbuf[1024 * 100] = {0};
@@ -470,7 +473,7 @@ void tcpservice::proctrans(void *param)
 
 	std::map<int, tagTransParam>::iterator itermap = mmapTransParam.find(index);
 	if (itermap == mmapTransParam.end()) {
-		log("%s[%d] *************************************************** [%03d] leave",__FUNCTION__,__LINE__, index);
+		log("%s[%d] leave[%03d]",__FUNCTION__,__LINE__, index);
 		return;
 	}
 	mmutex.lock();
@@ -525,7 +528,7 @@ error:
 		mmapTransParam.erase(itermap);
 	}
 	mmutex.unlock();
-	log("%s[%d] *************************************************** [%03d] leave",__FUNCTION__,__LINE__, index);
+	log("%s[%d] leave[%03d]",__FUNCTION__,__LINE__, index);
 }
 
 bool tcpservice::datasend(int sockfd, const char* buf, int bufsize)
@@ -653,7 +656,11 @@ void tcpservice::addfd(int& epfd, int opfd)
 	char ip[16],ippeer[16];
 	inet_ntop(AF_INET, &addr.sin_addr, ip, sizeof(ip));
 	inet_ntop(AF_INET, &addrpeer.sin_addr, ippeer, sizeof(ippeer));
-	log("%s[%d] addfd e%d-s%d a=%s:%d b=%s:%d",__FUNCTION__,__LINE__, epfd, opfd, ip, ntohs(addr.sin_port), ippeer, ntohs(addrpeer.sin_port));
+	if (strcmp(ippeer,"0.0.0.0") == 0) {
+		log("%s[%d] addfd e%d-s%d listen %s:%d",__FUNCTION__,__LINE__, epfd, opfd, ip, ntohs(addr.sin_port));
+	} else {
+		log("%s[%d] addfd e%d-s%d a=%s:%d b=%s:%d",__FUNCTION__,__LINE__, epfd, opfd, ip, ntohs(addr.sin_port), ippeer, ntohs(addrpeer.sin_port));
+	}
 	
 error:
 	mmutexep.unlock();
@@ -686,7 +693,11 @@ void tcpservice::delfd(int& epfd, int opfd)
 		char ip[16],ippeer[16];
 		inet_ntop(AF_INET, &addr.sin_addr, ip, sizeof(ip));
 		inet_ntop(AF_INET, &addrpeer.sin_addr, ippeer, sizeof(ippeer));
-		log("%s[%d] delfd e%d-s%d a=%s:%d b=%s:%d",__FUNCTION__,__LINE__, epfd, opfd, ip, ntohs(addr.sin_port), ippeer, ntohs(addrpeer.sin_port));
+		if (strcmp(ippeer,"0.0.0.0") == 0) {
+			log("%s[%d] delfd e%d-s%d listen %s:%d",__FUNCTION__,__LINE__, epfd, opfd, ip, ntohs(addr.sin_port));
+		} else {
+			log("%s[%d] delfd e%d-s%d a=%s:%d b=%s:%d",__FUNCTION__,__LINE__, epfd, opfd, ip, ntohs(addr.sin_port), ippeer, ntohs(addrpeer.sin_port));
+		}
 		close(opfd);
 		opfd = -1;
 	}
@@ -706,7 +717,7 @@ void tcpservice::clrfd(int& epfd)
 	std::map<int, std::vector<int> >::iterator itermap;
 	std::vector<int>::iterator itervec;
 	struct sockaddr_in addr;
-	struct sockaddr_in addr2;
+	struct sockaddr_in addrpeer;
 	socklen_t socklen = sizeof(struct sockaddr);
 	epoll_event event;
 	int opfd = -1;
@@ -717,12 +728,19 @@ void tcpservice::clrfd(int& epfd)
 		goto error;
 	}
 
+	char ip[16],ippeer[16];
 	for (itervec = itermap->second.begin(); itervec != itermap->second.end(); ++itervec) {
 		opfd = *itervec;
 		if (0 > opfd) continue;
 		bzero(&addr, sizeof(struct sockaddr_in));getsockname(opfd, (struct sockaddr *)(&addr), &socklen);
-		bzero(&addr2, sizeof(struct sockaddr_in));getpeername(opfd, (struct sockaddr *)(&addr2), &socklen);
-		log("%s[%d] delfd e%d-s%d a=%s:%d b=%s:%d",__FUNCTION__,__LINE__, epfd, opfd, inet_ntoa(addr.sin_addr), ntohs(addr.sin_port),inet_ntoa(addr2.sin_addr), ntohs(addr2.sin_port));
+		bzero(&addrpeer, sizeof(struct sockaddr_in));getpeername(opfd, (struct sockaddr *)(&addrpeer), &socklen);
+		inet_ntop(AF_INET, &addr.sin_addr, ip, sizeof(ip));
+		inet_ntop(AF_INET, &addrpeer.sin_addr, ippeer, sizeof(ippeer));
+		if (strcmp(ippeer,"0.0.0.0") == 0) {
+			log("%s[%d] delfd e%d-s%d listen %s:%d",__FUNCTION__,__LINE__, epfd, opfd, ip, ntohs(addr.sin_port));
+		} else {
+			log("%s[%d] delfd e%d-s%d a=%s:%d b=%s:%d",__FUNCTION__,__LINE__, epfd, opfd, ip, ntohs(addr.sin_port), ippeer, ntohs(addrpeer.sin_port));
+		}
 		epoll_ctl(epfd, EPOLL_CTL_DEL, opfd, &event);
 	}
 	mmapEpfd[epfd].clear();

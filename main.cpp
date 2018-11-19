@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <tinyxml.h>
 #include <map>
+#include <arpa/inet.h>
 #include "global.h"
 
 #define HOSTLEN   16
@@ -17,9 +18,8 @@
 char* appname;
 
 struct tagInfo {
-	int uid;
 	int type;
-	tagInfo():uid(0),type(0) {}
+	tagInfo():type(0) {}
 };
 
 struct tagBase : tagInfo {
@@ -44,19 +44,29 @@ struct tagProxyConfig : tagBase {
 	tagHostPort st[HOSTCOUNT-1];
 };
 
+struct tagConnectClient {
+	int sockfd;
+	tagReqConnClientPkt ReqConnClientPkt;
+};
+
 std::map<int, tagHost> mapHost;
 std::map<int, tagProxyConfig> mapAssistPort;
 char serverip[HOSTLEN];
 tagHost host;
 tagWelcomePkt gWelcomePkt;
+std::map<int, tagNewUserLoginPkt> mapNewUserLoginPkt;
+std::map<int, sem_t> mapSem;
 
+void mainserveraccpet(int socklisten, int sockaccept);
+void holeserveraccpet(int socklisten, int sockaccept);
+void mainserverrecv(int sockfd, const char* data, int size);
+void holeserverrecv(int sockfd, const char* data, int size);
 void mainconnectrecv(int sockfd, const char* data, int size);
 void newuserholerecv(int sockfd, const char* data, int size);
 void connectrecv(int sockfd, const char* data, int size);
 void listenrecv(int sockfd, const char* data, int size);
-void recvbl(int sockfd, const char* data, int size);
-void recvba(int sockfd, const char* data, int size);
 
+void* ThreadProcConnectClient(void* lpParameter);
 void* ThreadProcListenHole(void* lpParameter);
 void* ThreadProcMakeHole(void* lpParameter);
 void HandleNewUserLogin(int sockfd, tagNewUserLoginPkt* pNewUserLoginPkt);
@@ -86,14 +96,13 @@ int main(int argc, char *argv[])
 		sizeof(tagNewUserLoginPkt),
 		sizeof(tagSrvReqMakeHolePkt));
 	if (host.type == 0) {
-		//netservice::tcp->startserver(SRVTCPMAINPORT, recvlisten);
-		//netservice::tcp->startserver(SRVTCPHOLEPORT, recvassist);
+		netservice::tcp->startserver(SRVTCPMAINPORT, mainserverrecv, mainserveraccpet);
+		netservice::tcp->startserver(SRVTCPHOLEPORT, holeserverrecv, holeserveraccpet);
 	} else {
 		log("server:%s", serverip);
-		log("uid:%d, type:%d", host.uid, host.type);
+		log("type:%d", host.type);
 		if (host.type == 1) {
 			netservice::tcp->startconnect(serverip, SRVTCPMAINPORT, mainconnectrecv);
-		} else if (host.type == 2) {
 		}
 	}
 
@@ -103,25 +112,171 @@ int main(int argc, char *argv[])
 	return 0;
 }
 
-void recvlisten(int sockfd, const char* data, int size)
+void mainserveraccpet(int socklisten, int sockaccept)
 {
-	tagBase* pbase = (tagBase*)data;
-	if (pbase->cmd == 1) {
-		tagHost st;
-		memcpy(&st, data, sizeof(st));
-		mapHost[sockfd] = st;
-	} else if (pbase->cmd == 2) {
-		std::map<int, tagHost>::iterator itermap;
-		int i = 0;
-		tagProxyConfig stProxyConfig;
-		stProxyConfig.cmd = pbase->cmd;
-		for (itermap = mapHost.begin(); itermap != mapHost.end(); ++itermap,++i) {
-			memcpy(&(stProxyConfig.st[i]), &(*itermap),sizeof(tagHostPort));
+	struct sockaddr_in addr;
+	socklen_t socklen = sizeof(struct sockaddr);
+	bzero(&addr, sizeof(struct sockaddr_in)); getpeername(sockaccept, (struct sockaddr *)(&addr), &socklen);
+	
+	tagNewUserLoginPkt NewUserLoginPkt;
+	inet_ntop(AF_INET, &addr.sin_addr, NewUserLoginPkt.szClientIP, sizeof(NewUserLoginPkt.szClientIP));
+	NewUserLoginPkt.nClientPort = ntohs(addr.sin_port);
+	NewUserLoginPkt.dwID = sockaccept;
+	mapNewUserLoginPkt[NewUserLoginPkt.dwID] = NewUserLoginPkt;
+	
+	log("%s[%d] [main] client enter %s:%d", __FUNCTION__,__LINE__, NewUserLoginPkt.szClientIP, NewUserLoginPkt.nClientPort);
+	
+	tagWelcomePkt WelcomePkt;
+	strcpy ( WelcomePkt.szClientIP, NewUserLoginPkt.szClientIP );
+	WelcomePkt.nClientPort = NewUserLoginPkt.nClientPort;
+	WelcomePkt.dwID = NewUserLoginPkt.dwID;
+	sprintf ( WelcomePkt.szWelcomeInfo, "Hello, ID.%d, Welcome to login", WelcomePkt.dwID );
+	netservice::tcp->datasend( sockaccept, (char*)&WelcomePkt, (int)sizeof(tagWelcomePkt) );
+}
+
+void holeserveraccpet(int socklisten, int sockaccept)
+{
+	struct sockaddr_in addr;
+	socklen_t socklen = sizeof(struct sockaddr);
+	bzero(&addr, sizeof(struct sockaddr_in)); getpeername(sockaccept, (struct sockaddr *)(&addr), &socklen);
+	
+	tagNewUserLoginPkt NewUserLoginPkt;
+	inet_ntop(AF_INET, &addr.sin_addr, NewUserLoginPkt.szClientIP, sizeof(NewUserLoginPkt.szClientIP));
+	NewUserLoginPkt.nClientPort = ntohs(addr.sin_port);
+	NewUserLoginPkt.dwID = sockaccept;
+	mapNewUserLoginPkt[NewUserLoginPkt.dwID] = NewUserLoginPkt;
+	
+	log("%s[%d] [hole] client enter %s:%d", __FUNCTION__,__LINE__, NewUserLoginPkt.szClientIP, NewUserLoginPkt.nClientPort);
+}
+
+void mainserverrecv(int sockfd, const char* data, int size)
+{
+	if ( !data || size < 4 ) return;
+	bool bmainserverrecv = true;
+	
+	PACKET_TYPE *pePacketType = (PACKET_TYPE*)data;
+	assert ( pePacketType );
+	switch ( *pePacketType ) {
+	case PACKET_TYPE_HOLE_LISTEN_READY:
+		{// 被动端（客户端B）打洞和侦听均已准备就绪
+			log ("[main] tagHoleListenReadyPkt:%d size:%d", sizeof(tagHoleListenReadyPkt), size);
+			assert ( size == sizeof(tagHoleListenReadyPkt) );
+			tagHoleListenReadyPkt *pHoleListenReadyPkt = (tagHoleListenReadyPkt*)data;
+			assert ( pHoleListenReadyPkt );
+			log ( "[main] Client.%d hole and listen ready", pHoleListenReadyPkt->dwInvitedID );
+			
+			// 通知正在与客户端A通信的服务器线程，以将客户端B的外部IP地址和端口号告诉客户端A
+			
 		}
-		netservice::tcp->datasend(sockfd, (const char*)&stProxyConfig, sizeof(stProxyConfig));
-	} else if (pbase->cmd == 3) {
-		
+	default:
+		{
+			assert(!bmainserverrecv);
+			break;
+		}
 	}
+}
+
+void holeserverrecv(int sockfd, const char* data, int size)
+{
+	if ( !data || size < 4 ) return;
+	bool bholeserverrecv = true;
+	
+	PACKET_TYPE *pePacketType = (PACKET_TYPE*)data;
+	assert ( pePacketType );
+	switch ( *pePacketType ) {
+	case PACKET_TYPE_REQUEST_CONN_CLIENT:
+		{// 客户端A要求与客户端B建立直接的TCP连接
+			log ("[hole] tagReqConnClientPkt:%d size:%d", sizeof(tagReqConnClientPkt), size);
+			assert ( size == sizeof(tagReqConnClientPkt) );
+			tagReqConnClientPkt *pReqConnClientPkt = (tagReqConnClientPkt *)data;
+			assert ( pReqConnClientPkt );
+			
+			tagConnectClient *pConnectClient = new tagConnectClient();
+			pConnectClient->sockfd = sockfd;
+			memcpy(&(pConnectClient->ReqConnClientPkt), pReqConnClientPkt, sizeof(tagReqConnClientPkt));
+			pthread_t pthreadId = 0;
+			pthread_create(&pthreadId, NULL, ThreadProcConnectClient, (void*)pConnectClient);
+		}
+	case PACKET_TYPE_REQUEST_DISCONNECT:
+		{// 被动端（客户端B）请求服务器断开连接，这个时候应该将客户端B的外部IP和端口号告诉客户端A，并让客户端A主动
+		 // 连接客户端B的外部IP和端口号
+		 	log ("[hole] tagReqSrvDisconnectPkt:%d size:%d", sizeof(tagReqSrvDisconnectPkt), size);
+			assert ( size == sizeof(tagReqSrvDisconnectPkt) );
+			tagReqSrvDisconnectPkt *pReqSrvDisconnectPkt = (tagReqSrvDisconnectPkt*)data;
+			assert ( pReqSrvDisconnectPkt );
+			log ( "[hole] Client.%d request disconnect", stInviterHole.dwID );
+			netservice::tcp->stopconnect(sockfd);
+			
+			/*if (mapNewUserLoginPkt.find(pReqConnClientPkt->dwInvitedID) == mapNewUserLoginPkt.end()) {
+				log ( "[hole] not found invitedID[%d]", pReqConnClientPkt->dwInvitedID);
+				return;
+			}
+			tagNewUserLoginPkt& stInvited = mapNewUserLoginPkt[pReqConnClientPkt->dwInvitedID];
+			
+			tagSrvReqDirectConnectPkt SrvReqDirectConnectPkt;
+			SrvReqDirectConnectPkt.dwInvitedID = stInvited.dwID;
+			strcpy ( SrvReqDirectConnectPkt.szInvitedIP, stInvited.szClientIP );
+			SrvReqDirectConnectPkt.nInvitedPort = stInvited.nClientPort;*/
+			
+		}
+	default: 
+		{
+			assert(!bholeserverrecv);
+			break;
+		}
+	}
+}
+
+void* ThreadProcConnectClient(void* lpParameter)
+{
+	tagConnectClient *pConnectClient = (tagConnectClient*)lpParameter;
+	assert ( pConnectClient );
+	tagConnectClient ConnectClient;
+	memcpy ( &ConnectClient, pConnectClient, sizeof(tagConnectClient) );
+	delete pConnectClient;
+	
+	if (mapNewUserLoginPkt.find(pConnectClient->sockfd) == mapNewUserLoginPkt.end()) {
+		log ( "[hole] not found inviterHoleID[%d]", pConnectClient->sockfd);
+		return;
+	}
+	tagNewUserLoginPkt& stInviterHole = mapNewUserLoginPkt[sockfd];
+	
+	tagReqConnClientPkt& ReqConnClientPkt = pConnectClient->ReqConnClientPkt;	
+	if (mapNewUserLoginPkt.find(ReqConnClientPkt.dwInviterID) == mapNewUserLoginPkt.end()) {
+		log ( "[hole] not found inviterID[%d]", ReqConnClientPkt.dwInviterID);
+		return 0;
+	}
+	tagNewUserLoginPkt& stInviter = mapNewUserLoginPkt[ReqConnClientPkt.dwInviterID];
+	if (mapNewUserLoginPkt.find(ReqConnClientPkt.dwInvitedID) == mapNewUserLoginPkt.end()) {
+		log ( "[hole] not found invitedID[%d]", ReqConnClientPkt.dwInvitedID);
+		return 0;
+	}
+	tagNewUserLoginPkt& stInvited = mapNewUserLoginPkt[ReqConnClientPkt.dwInvitedID];
+
+	// 客户端A想要和客户端B建立直接的TCP连接，服务器负责将A的外部IP和端口号告诉给B
+	tagSrvReqMakeHolePkt SrvReqMakeHolePkt;
+	SrvReqMakeHolePkt.dwInviterID = stInviter.dwID;
+	SrvReqMakeHolePkt.dwInvitedID = stInvited.dwID;
+	strcpy ( SrvReqMakeHolePkt.szClientHoleIP, stInviterHole.szClientIP );
+	SrvReqMakeHolePkt.nClientHolePort = stInviterHole.nClientPort;
+	SrvReqMakeHolePkt.dwInviterHoleID = stInviterHole.dwID;
+	netservice::tcp->datasend( sockfd, (char*)&SrvReqMakeHolePkt, (int)sizeof(tagSrvReqMakeHolePkt) );
+	
+	log ( "[hole] %s:%d invite %s:%d connect %s:%d", stInviter.szClientIP, stInviter.nClientPort, stInvited.szClientIP, stInvited.nClientPort, stInviterHole.szClientIP, stInviterHole.nClientPort );
+	
+	// 等待客户端B打洞完成，完成以后通知客户端A直接连接客户端B外部IP和端口号
+	sem_t sem;
+	if( sem_init(&sem, 0, 0) ) {
+		log ( "[hole] sem_init error[%d]:%s", errno, strerror(errno));
+		return 0;
+	}
+	mapSem[pConnectClient->sockfd] = sem;
+	while ((ret = sem_timedwait(&mapSem[pConnectClient->sockfd], NULL)) == -1 && errno == EINTR) {
+		usleep(1000);
+	}
+	
+	
+	return 0;
 }
 
 void HandleNewUserLogin(int sockfd, tagNewUserLoginPkt* pNewUserLoginPkt)
@@ -134,7 +289,7 @@ void HandleNewUserLogin(int sockfd, tagNewUserLoginPkt* pNewUserLoginPkt)
 	
 	struct sockaddr_in addr;
 	socklen_t socklen = sizeof(struct sockaddr);
-	bzero(&addr, sizeof(struct sockaddr_in));getsockname(sockhole, (struct sockaddr *)(&addr), &socklen);
+	bzero(&addr, sizeof(struct sockaddr_in)); getpeername(sockhole, (struct sockaddr *)(&addr), &socklen);
 	int holeport = ntohs(addr.sin_port);
 	
 	// 创建一个线程来侦听 打洞端口 的连接请求
@@ -347,9 +502,6 @@ bool LoadConfig(const char* xmlfile, char* serverip, tagHost& host, std::vector<
 			continue;
 		}
 		if (strcmp(elem->Value(), "info") == 0) {
-			ptr = elem->Attribute("id");
-			if (ptr) ptr = (strcmp(ptr, "") == 0) ? "0" : ptr;
-			host.uid = atoi(ptr);
 			ptr = elem->Attribute("type");
 			if (ptr) ptr = (strcmp(ptr, "") == 0) ? "0" : ptr;
 			host.type = atoi(ptr);
