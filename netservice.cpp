@@ -98,7 +98,7 @@ void tcpservice::stop()
 	clrfd(mHoleEpollfd);
 }
 
-void tcpservice::startserver(int port, callbackrecv cbrecv, callbackaccpet cbaccpet, int listencount, int recvthreadcount)
+void tcpservice::startserver(int port, callbackrecv cbrecv, callbackaccpet cbaccpet, int recvthreadcount, int listencount)
 {
 	tagStartServerParam *pStartServerParam = new tagStartServerParam();
 	struct sockaddr_in addr;

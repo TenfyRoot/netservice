@@ -12,7 +12,7 @@
 
 namespace netservice {
 
-#define MAXTHREADNUM 20
+#define MAXTHREADNUM 100
 
 class Mutex;
 
@@ -107,7 +107,7 @@ public:
 	tcpservice();
 	~tcpservice();
 
-	void startserver(int port, callbackrecv cbrecv = 0, callbackaccpet cbaccpet = 0, int listencount = 100, int recvthreadcount = 1);
+	void startserver(int port, callbackrecv cbrecv = 0, callbackaccpet cbaccpet = 0, int recvthreadcount = MAXTHREADNUM, int listencount = MAXTHREADNUM);
 	void procstartserver(void *param);
 	int  startconnect(const char* ip, int port, callbackrecv callback = 0, int bindport = 0);
 	void stopconnect(int sockfd);

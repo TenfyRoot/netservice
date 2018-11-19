@@ -8,6 +8,7 @@
 #include <tinyxml.h>
 #include <map>
 #include <arpa/inet.h>
+#include <errno.h>
 #include "global.h"
 
 #define HOSTLEN   16
@@ -44,9 +45,9 @@ struct tagProxyConfig : tagBase {
 	tagHostPort st[HOSTCOUNT-1];
 };
 
-struct tagConnectClient {
+struct tagDirectConnect {
 	int sockfd;
-	tagReqConnClientPkt ReqConnClientPkt;
+	tagSrvReqDirectConnectPkt SrvReqDirectConnectPkt;
 };
 
 std::map<int, tagHost> mapHost;
@@ -55,6 +56,7 @@ char serverip[HOSTLEN];
 tagHost host;
 tagWelcomePkt gWelcomePkt;
 std::map<int, tagNewUserLoginPkt> mapNewUserLoginPkt;
+std::map<int, tagNewUserLoginPkt> mapNewUserLoginPktMain;
 std::map<int, sem_t> mapSem;
 
 void mainserveraccpet(int socklisten, int sockaccept);
@@ -67,6 +69,7 @@ void connectrecv(int sockfd, const char* data, int size);
 void listenrecv(int sockfd, const char* data, int size);
 
 void* ThreadProcConnectClient(void* lpParameter);
+void* ThreadProcDisConnect(void* lpParameter);
 void* ThreadProcListenHole(void* lpParameter);
 void* ThreadProcMakeHole(void* lpParameter);
 void HandleNewUserLogin(int sockfd, tagNewUserLoginPkt* pNewUserLoginPkt);
@@ -91,10 +94,14 @@ int main(int argc, char *argv[])
 	LoadConfig(xmlname, serverip, host, vecConfig);
 	netservice::logfun = log;
 	netservice::inst();
-	log ("tagWelcomePkt:%d, tagNewUserLoginPkt:%d, tagSrvReqMakeHolePkt:%d",
+	log ("tagWelcomePkt:%d, tagNewUserLoginPkt:%d, tagSrvReqMakeHolePkt:%d, tagReqConnClientPkt:%d, tagHoleListenReadyPkt:%d, tagReqSrvDisconnectPkt:%d",
 		sizeof(tagWelcomePkt),
 		sizeof(tagNewUserLoginPkt),
-		sizeof(tagSrvReqMakeHolePkt));
+		sizeof(tagSrvReqMakeHolePkt),
+		sizeof(tagReqConnClientPkt),
+		sizeof(tagHoleListenReadyPkt),
+		sizeof(tagReqSrvDisconnectPkt)
+		);
 	if (host.type == 0) {
 		netservice::tcp->startserver(SRVTCPMAINPORT, mainserverrecv, mainserveraccpet);
 		netservice::tcp->startserver(SRVTCPHOLEPORT, holeserverrecv, holeserveraccpet);
@@ -122,7 +129,13 @@ void mainserveraccpet(int socklisten, int sockaccept)
 	inet_ntop(AF_INET, &addr.sin_addr, NewUserLoginPkt.szClientIP, sizeof(NewUserLoginPkt.szClientIP));
 	NewUserLoginPkt.nClientPort = ntohs(addr.sin_port);
 	NewUserLoginPkt.dwID = sockaccept;
+	
+	std::map<int, tagNewUserLoginPkt>::iterator itermap;
+	for (itermap = mapNewUserLoginPktMain.begin(); itermap != mapNewUserLoginPktMain.end(); ++itermap) {
+		netservice::tcp->datasend( itermap->first, (char*)&NewUserLoginPkt, (int)sizeof(tagNewUserLoginPkt) );
+	}
 	mapNewUserLoginPkt[NewUserLoginPkt.dwID] = NewUserLoginPkt;
+	mapNewUserLoginPktMain[NewUserLoginPkt.dwID] = NewUserLoginPkt;
 	
 	log("%s[%d] [main] client enter %s:%d", __FUNCTION__,__LINE__, NewUserLoginPkt.szClientIP, NewUserLoginPkt.nClientPort);
 	
@@ -147,6 +160,8 @@ void holeserveraccpet(int socklisten, int sockaccept)
 	mapNewUserLoginPkt[NewUserLoginPkt.dwID] = NewUserLoginPkt;
 	
 	log("%s[%d] [hole] client enter %s:%d", __FUNCTION__,__LINE__, NewUserLoginPkt.szClientIP, NewUserLoginPkt.nClientPort);
+	
+	
 }
 
 void mainserverrecv(int sockfd, const char* data, int size)
@@ -166,10 +181,16 @@ void mainserverrecv(int sockfd, const char* data, int size)
 			log ( "[main] Client.%d hole and listen ready", pHoleListenReadyPkt->dwInvitedID );
 			
 			// 通知正在与客户端A通信的服务器线程，以将客户端B的外部IP地址和端口号告诉客户端A
-			
+			if (mapSem.find(sockfd) != mapSem.end()) {
+				sem_post(&mapSem[sockfd]);
+			} else {
+				log ( "[main] not found sem[%d]", sockfd );
+			}
+			break;
 		}
 	default:
 		{
+			log ("[main] size:%d", size);
 			assert(!bmainserverrecv);
 			break;
 		}
@@ -181,6 +202,12 @@ void holeserverrecv(int sockfd, const char* data, int size)
 	if ( !data || size < 4 ) return;
 	bool bholeserverrecv = true;
 	
+	if (mapNewUserLoginPkt.find(sockfd) == mapNewUserLoginPkt.end()) {
+		log ( "[hole] not found inviterHoleID[%d]", sockfd);
+		return;
+	}
+	tagNewUserLoginPkt& stInviterHole = mapNewUserLoginPkt[sockfd];
+			
 	PACKET_TYPE *pePacketType = (PACKET_TYPE*)data;
 	assert ( pePacketType );
 	switch ( *pePacketType ) {
@@ -190,12 +217,29 @@ void holeserverrecv(int sockfd, const char* data, int size)
 			assert ( size == sizeof(tagReqConnClientPkt) );
 			tagReqConnClientPkt *pReqConnClientPkt = (tagReqConnClientPkt *)data;
 			assert ( pReqConnClientPkt );
-			
-			tagConnectClient *pConnectClient = new tagConnectClient();
-			pConnectClient->sockfd = sockfd;
-			memcpy(&(pConnectClient->ReqConnClientPkt), pReqConnClientPkt, sizeof(tagReqConnClientPkt));
-			pthread_t pthreadId = 0;
-			pthread_create(&pthreadId, NULL, ThreadProcConnectClient, (void*)pConnectClient);
+
+			if (mapNewUserLoginPkt.find(pReqConnClientPkt->dwInviterID) == mapNewUserLoginPkt.end()) {
+				log ( "[hole] not found inviterID[%d]", pReqConnClientPkt->dwInviterID);
+				return;
+			}
+			tagNewUserLoginPkt& stInviter = mapNewUserLoginPkt[pReqConnClientPkt->dwInviterID];
+			if (mapNewUserLoginPkt.find(pReqConnClientPkt->dwInvitedID) == mapNewUserLoginPkt.end()) {
+				log ( "[hole] not found invitedID[%d]", pReqConnClientPkt->dwInvitedID);
+				return;
+			}
+			tagNewUserLoginPkt& stInvited = mapNewUserLoginPkt[pReqConnClientPkt->dwInvitedID];
+
+			// 客户端A想要和客户端B建立直接的TCP连接，服务器负责将A的外部IP和端口号告诉给B
+			tagSrvReqMakeHolePkt SrvReqMakeHolePkt;
+			SrvReqMakeHolePkt.dwInviterID = stInviter.dwID;
+			SrvReqMakeHolePkt.dwInvitedID = stInvited.dwID;
+			strcpy ( SrvReqMakeHolePkt.szClientHoleIP, stInviterHole.szClientIP );
+			SrvReqMakeHolePkt.nClientHolePort = stInviterHole.nClientPort;
+			SrvReqMakeHolePkt.dwInviterHoleID = stInviterHole.dwID;
+			if (netservice::tcp->datasend(sockfd, (char*)&SrvReqMakeHolePkt, (int)sizeof(tagSrvReqMakeHolePkt))) {
+				log ( "[hole] %s:%d invite %s:%d connect %s:%d", stInviter.szClientIP, stInviter.nClientPort, stInvited.szClientIP, stInvited.nClientPort, stInviterHole.szClientIP, stInviterHole.nClientPort );
+			}
+			break;
 		}
 	case PACKET_TYPE_REQUEST_DISCONNECT:
 		{// 被动端（客户端B）请求服务器断开连接，这个时候应该将客户端B的外部IP和端口号告诉客户端A，并让客户端A主动
@@ -204,78 +248,53 @@ void holeserverrecv(int sockfd, const char* data, int size)
 			assert ( size == sizeof(tagReqSrvDisconnectPkt) );
 			tagReqSrvDisconnectPkt *pReqSrvDisconnectPkt = (tagReqSrvDisconnectPkt*)data;
 			assert ( pReqSrvDisconnectPkt );
-			log ( "[hole] Client.%d request disconnect", stInviterHole.dwID );
+			
+			tagDirectConnect *pDirectConnect = new tagDirectConnect();
+			pDirectConnect->sockfd = sockfd;
+			pDirectConnect->SrvReqDirectConnectPkt.dwInvitedID = pReqSrvDisconnectPkt->dwInvitedID;
+			strcpy ( pDirectConnect->SrvReqDirectConnectPkt.szInvitedIP, stInviterHole.szClientIP );
+			pDirectConnect->SrvReqDirectConnectPkt.nInvitedPort = stInviterHole.nClientPort;
+			
+			log ( "[hole] Client.%d request disconnect", sockfd );
 			netservice::tcp->stopconnect(sockfd);
-			
-			/*if (mapNewUserLoginPkt.find(pReqConnClientPkt->dwInvitedID) == mapNewUserLoginPkt.end()) {
-				log ( "[hole] not found invitedID[%d]", pReqConnClientPkt->dwInvitedID);
-				return;
-			}
-			tagNewUserLoginPkt& stInvited = mapNewUserLoginPkt[pReqConnClientPkt->dwInvitedID];
-			
-			tagSrvReqDirectConnectPkt SrvReqDirectConnectPkt;
-			SrvReqDirectConnectPkt.dwInvitedID = stInvited.dwID;
-			strcpy ( SrvReqDirectConnectPkt.szInvitedIP, stInvited.szClientIP );
-			SrvReqDirectConnectPkt.nInvitedPort = stInvited.nClientPort;*/
-			
+	
+			pthread_t pthreadId = 0;
+			pthread_create(&pthreadId, NULL, ThreadProcDisConnect, (void*)pDirectConnect);
+			break;
 		}
 	default: 
 		{
+			log ("[hole] size:%d", size);
 			assert(!bholeserverrecv);
 			break;
 		}
 	}
 }
 
-void* ThreadProcConnectClient(void* lpParameter)
+void* ThreadProcDisConnect(void* lpParameter)
 {
-	tagConnectClient *pConnectClient = (tagConnectClient*)lpParameter;
-	assert ( pConnectClient );
-	tagConnectClient ConnectClient;
-	memcpy ( &ConnectClient, pConnectClient, sizeof(tagConnectClient) );
-	delete pConnectClient;
 	
-	if (mapNewUserLoginPkt.find(pConnectClient->sockfd) == mapNewUserLoginPkt.end()) {
-		log ( "[hole] not found inviterHoleID[%d]", pConnectClient->sockfd);
-		return;
-	}
-	tagNewUserLoginPkt& stInviterHole = mapNewUserLoginPkt[sockfd];
-	
-	tagReqConnClientPkt& ReqConnClientPkt = pConnectClient->ReqConnClientPkt;	
-	if (mapNewUserLoginPkt.find(ReqConnClientPkt.dwInviterID) == mapNewUserLoginPkt.end()) {
-		log ( "[hole] not found inviterID[%d]", ReqConnClientPkt.dwInviterID);
-		return 0;
-	}
-	tagNewUserLoginPkt& stInviter = mapNewUserLoginPkt[ReqConnClientPkt.dwInviterID];
-	if (mapNewUserLoginPkt.find(ReqConnClientPkt.dwInvitedID) == mapNewUserLoginPkt.end()) {
-		log ( "[hole] not found invitedID[%d]", ReqConnClientPkt.dwInvitedID);
-		return 0;
-	}
-	tagNewUserLoginPkt& stInvited = mapNewUserLoginPkt[ReqConnClientPkt.dwInvitedID];
+	tagDirectConnect *pDirectConnect = (tagDirectConnect *)lpParameter;
+	assert ( pDirectConnect );
+	int sockfd = pDirectConnect->sockfd;
+	tagSrvReqDirectConnectPkt SrvReqDirectConnectPkt;
+	memcpy ( &SrvReqDirectConnectPkt, &(pDirectConnect->SrvReqDirectConnectPkt), sizeof(tagSrvReqDirectConnectPkt) );
+	delete pDirectConnect;
 
-	// 客户端A想要和客户端B建立直接的TCP连接，服务器负责将A的外部IP和端口号告诉给B
-	tagSrvReqMakeHolePkt SrvReqMakeHolePkt;
-	SrvReqMakeHolePkt.dwInviterID = stInviter.dwID;
-	SrvReqMakeHolePkt.dwInvitedID = stInvited.dwID;
-	strcpy ( SrvReqMakeHolePkt.szClientHoleIP, stInviterHole.szClientIP );
-	SrvReqMakeHolePkt.nClientHolePort = stInviterHole.nClientPort;
-	SrvReqMakeHolePkt.dwInviterHoleID = stInviterHole.dwID;
-	netservice::tcp->datasend( sockfd, (char*)&SrvReqMakeHolePkt, (int)sizeof(tagSrvReqMakeHolePkt) );
-	
-	log ( "[hole] %s:%d invite %s:%d connect %s:%d", stInviter.szClientIP, stInviter.nClientPort, stInvited.szClientIP, stInvited.nClientPort, stInviterHole.szClientIP, stInviterHole.nClientPort );
-	
 	// 等待客户端B打洞完成，完成以后通知客户端A直接连接客户端B外部IP和端口号
 	sem_t sem;
 	if( sem_init(&sem, 0, 0) ) {
 		log ( "[hole] sem_init error[%d]:%s", errno, strerror(errno));
 		return 0;
 	}
-	mapSem[pConnectClient->sockfd] = sem;
-	while ((ret = sem_timedwait(&mapSem[pConnectClient->sockfd], NULL)) == -1 && errno == EINTR) {
+	mapSem[SrvReqDirectConnectPkt.dwInvitedID] = sem;
+	while (sem_timedwait(&mapSem[SrvReqDirectConnectPkt.dwInvitedID], NULL) == -1 && errno == EINTR) {
 		usleep(1000);
 	}
-	
-	
+	mapSem.erase(mapSem.find(SrvReqDirectConnectPkt.dwInvitedID));
+	sem_destroy(&sem);
+
+	netservice::tcp->datasend(sockfd, (char*)&SrvReqDirectConnectPkt, (int)sizeof(tagSrvReqDirectConnectPkt));
 	return 0;
 }
 
@@ -339,7 +358,7 @@ void HandleSrvReqMakeHole(int sockfd, tagSrvReqMakeHolePkt* pSrvReqMakeHolePkt)
 void HandleSrvReqDirectConnect(tagSrvReqDirectConnectPkt* pSrvReqDirectConnectPkt)
 {
 	assert ( pSrvReqDirectConnectPkt );
-	log ( "[A say] you can connect direct to %s:%d:%u \n", pSrvReqDirectConnectPkt->szInvitedIP,
+	log ( "[A say] you can connect direct to %s:%d:%d \n", pSrvReqDirectConnectPkt->szInvitedIP,
 		pSrvReqDirectConnectPkt->nInvitedPort, pSrvReqDirectConnectPkt->dwInvitedID );
 }
 
