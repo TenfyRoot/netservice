@@ -1,5 +1,6 @@
 #ifndef GLOBAL_H
 #define GLOBAL_H
+#include <string.h>
 
 typedef unsigned int        DWORD;
 typedef int                 BOOL;

@@ -25,13 +25,11 @@ void loglevel(int level, const char* format, va_list valst);
 	#define OFFSET(structure, member) ((int32_t)&((structure*)0)->member)
 #endif
 
-tcpservice* tcp = 0;
-void inst(int create)
-{
-	if (!create) release(tcp);
-	if (create && !tcp) {tcp = new tcpservice();}
-	
-};
+tcpservice* instance = 0;
+void inst(int create) {
+	if (!create) release(instance);
+	if (create && !instance) {instance = new tcpservice();}	
+}
 
 void* threadstartserver(void *param) {
 	((tcpservice*)((tagParam*)param)->param)->procstartserver(param); return 0;
@@ -98,7 +96,7 @@ void tcpservice::stop()
 	clrfd(mHoleEpollfd);
 }
 
-void tcpservice::startserver(int port, callbackrecv cbrecv, callbackaccpet cbaccpet, int recvthreadcount, int listencount)
+void tcpservice::startserver(int port, callbackrecv cbrecv, void* paramrecv, callbackaccept cbaccept, void* paramaccept, int recvthreadcount, int listencount)
 {
 	tagStartServerParam *pStartServerParam = new tagStartServerParam();
 	struct sockaddr_in addr;
@@ -130,10 +128,11 @@ void tcpservice::startserver(int port, callbackrecv cbrecv, callbackaccpet cbacc
 	}
 	
 	if (cbrecv) {
-		mmapRecvFunc[sockfd] = cbrecv;
+		
+		mmapRecvFunc[sockfd] = tagCallRecv(paramrecv, cbrecv);
 	}
-	if (cbaccpet) {
-		mmapAcceptFunc[sockfd] = cbaccpet;
+	if (cbaccept) {
+		mmapAcceptFunc[sockfd] = tagCallAccept(paramaccept, cbaccept);
 	}
 	
 	setsockbuf(sockfd);
@@ -193,7 +192,7 @@ void tcpservice::procstartserver(void *param)
 			if(sockrecv > 0) {
 				mmapListenfdClientfds[socklisten].push_back(sockrecv);
 				if (mmapAcceptFunc.find(socklisten) != mmapAcceptFunc.end()) {
-					(mmapAcceptFunc[socklisten])(socklisten, sockrecv);
+					(mmapAcceptFunc[socklisten].cb)(mmapAcceptFunc[socklisten].param, socklisten, sockrecv);
 				} else {
 					log("%s[%d] client enter %s:%d", __FUNCTION__,__LINE__, inet_ntoa(addr.sin_addr), ntohs(addr.sin_port));
 				}
@@ -208,7 +207,7 @@ void tcpservice::procstartserver(void *param)
 							pIndex->param = this;
 							pIndex->i = i;
 							if (mmapRecvFunc.find(socklisten) != mmapRecvFunc.end()) {
-								pIndex->data = (void*)mmapRecvFunc[socklisten];
+								pIndex->data = (void*)&(mmapRecvFunc[socklisten]);
 							}
 							pthread_create(&mpthreadrecv[i], NULL, threadrecv, (void*)pIndex);
 						}
@@ -227,7 +226,8 @@ void tcpservice::procrecv(void* param)
 {
 	tagIndex* pIndex = (tagIndex*)param;
 	int index = pIndex->i;
-	callbackrecv callbackrecvfunc = (callbackrecv)pIndex->data;
+	tagCallRecv stCallRecv;
+	memcpy(&stCallRecv, pIndex->data, sizeof(tagCallRecv));
 	release(pIndex);
 	
 	log("%s[%d] enter[%d]", __FUNCTION__,__LINE__, index);
@@ -263,8 +263,8 @@ void tcpservice::procrecv(void* param)
 			bzero(revbuf, sizeof(revbuf));
 			nRecv = recv(sockrecv, revbuf, sizeof(revbuf), 0);
 			if (0 < nRecv) {
-				if (callbackrecvfunc) {
-					callbackrecvfunc(sockrecv, revbuf, nRecv);
+				if (stCallRecv.cb) {
+					stCallRecv.cb(stCallRecv.param, sockrecv, revbuf, nRecv);
 				} else {
 					log("%s[%d] [%s:%d]:\"%s\"",__FUNCTION__,__LINE__, inet_ntoa(addr.sin_addr), ntohs(addr.sin_port), revbuf);
 				}
@@ -279,19 +279,19 @@ void tcpservice::procrecv(void* param)
 	log("%s[%d] leave[%d] ok",__FUNCTION__,__LINE__,index);
 }
 
-int tcpservice::startconnect(const char* ip, int port, callbackrecv callback, int bindport)
+int tcpservice::startconnect(const char* ip, int port, callbackrecv callback, void* paramrecv, int bindport)
 {
 	int sockfd = connecthost(ip, port, bindport, true);
 	if (0 > sockfd) return -1;
 	
 	if (callback) {
-		mmapRecvFunc[sockfd] = callback;
+		mmapRecvFunc[sockfd] = tagCallRecv(paramrecv,callback);
 	}
 
 	tagIndex *pIndex = new tagIndex();
 	pIndex->param = this;
 	if (mmapRecvFunc.find(sockfd) != mmapRecvFunc.end()) {
-		pIndex->data = (void*)mmapRecvFunc[sockfd];
+		pIndex->data = (void*)&(mmapRecvFunc[sockfd]);
 	}
 	addfd(mRecvEpollfd[pIndex->i], sockfd);
 	if (!mpthreadrecv[pIndex->i]) {

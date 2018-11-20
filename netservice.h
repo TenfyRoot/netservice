@@ -100,16 +100,32 @@ class Mutex
     int unlock() { return  pthread_mutex_unlock(&m_mutex); }   
 };
 
-typedef void (*callbackaccpet)(int socklisten, int sockaccpet);
-typedef void (*callbackrecv)(int sockfd, const char* pch, int size);
+typedef void (*callbackaccept)(void* param, int socklisten, int sockaccpet);
+typedef void (*callbackrecv)(void* param, int sockfd, const char* pch, int size);
+struct tagCallAccept {
+	void* param;
+	callbackaccept cb;
+	tagCallAccept() : param(0), cb(0) {}
+	tagCallAccept(void* ptr, callbackaccept cbfunc)
+		: param(ptr), cb(cbfunc) {}
+};
+struct tagCallRecv {
+	void* param;
+	callbackrecv cb;
+	tagCallRecv() : param(0), cb(0) {}
+	tagCallRecv(void* ptr, callbackrecv cbfunc)
+		: param(ptr), cb(cbfunc) {}
+};
 class tcpservice {
 public:
 	tcpservice();
 	~tcpservice();
 
-	void startserver(int port, callbackrecv cbrecv = 0, callbackaccpet cbaccpet = 0, int recvthreadcount = MAXTHREADNUM, int listencount = MAXTHREADNUM);
+	void startserver(int port, callbackrecv cbrecv = 0, void* paramrecv = 0, \
+		callbackaccept cbaccept = 0, void* paramaccept = 0, \
+		int recvthreadcount = MAXTHREADNUM, int listencount = MAXTHREADNUM);
 	void procstartserver(void *param);
-	int  startconnect(const char* ip, int port, callbackrecv callback = 0, int bindport = 0);
+	int  startconnect(const char* ip, int port, callbackrecv callback = 0, void* paramrecv = 0, int bindport = 0);
 	void stopconnect(int sockfd);
 	void procrecv(void* param);
 	void startservertrans(const char* svrip, int svrport, std::vector<tagConfig>& vecConfig);
@@ -147,11 +163,11 @@ private:
 	Mutex mmutexep;
 	
 	std::map<int, std::vector<int> > mmapListenfdClientfds;
-	std::map<int, callbackrecv> mmapRecvFunc;
-	std::map<int, callbackaccpet> mmapAcceptFunc;
+	std::map<int, tagCallRecv> mmapRecvFunc;
+	std::map<int, tagCallAccept> mmapAcceptFunc;
 };
 
-extern tcpservice* tcp;
+extern tcpservice* instance;
 void inst(int create = 1);
 
 typedef void (*logcallback)(int level, const char*, va_list);
